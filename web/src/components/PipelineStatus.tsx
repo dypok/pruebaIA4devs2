@@ -4,7 +4,11 @@ import { PipelineTelemetry } from '../types';
 import { fetchPipelineStatus, fetchQuarantineRecords, triggerBackfillApi, triggerAiRegenerateApi } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
-export const PipelineStatus: React.FC = () => {
+interface PipelineStatusProps {
+  onRefreshReports?: () => Promise<void> | void;
+}
+
+export const PipelineStatus: React.FC<PipelineStatusProps> = ({ onRefreshReports }) => {
   const { isAdmin } = useAuth();
   const [telemetry, setTelemetry] = useState<PipelineTelemetry | null>(null);
   const [quarantine, setQuarantine] = useState<any[]>([]);
@@ -44,6 +48,9 @@ export const PipelineStatus: React.FC = () => {
     try {
       const res = await triggerAiRegenerateApi();
       setActionMsg(res.message || 'Regeneración iniciada.');
+      if (onRefreshReports) {
+        await onRefreshReports();
+      }
       setTimeout(() => setActionMsg(null), 5000);
     } catch (e: any) {
       alert(e.message);

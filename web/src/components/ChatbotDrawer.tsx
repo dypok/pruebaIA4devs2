@@ -65,6 +65,33 @@ export const ChatbotDrawer: React.FC<ChatbotDrawerProps> = ({
     setExpandedSql((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
+  const renderFormattedText = (text: string) => {
+    return text.split('\n').map((line, lineIdx) => {
+      const parts = line.split(/(\*\*.*?\*\*|\*.*?\*)/g);
+      return (
+        <div key={lineIdx} className={line.trim() === '' ? 'h-2' : ''}>
+          {parts.map((part, partIdx) => {
+            if (part.startsWith('**') && part.endsWith('**')) {
+              return (
+                <strong key={partIdx} className="font-semibold text-white">
+                  {part.slice(2, -2)}
+                </strong>
+              );
+            }
+            if (part.startsWith('*') && part.endsWith('*')) {
+              return (
+                <em key={partIdx} className="italic text-slate-300">
+                  {part.slice(1, -1)}
+                </em>
+              );
+            }
+            return <span key={partIdx}>{part}</span>;
+          })}
+        </div>
+      );
+    });
+  };
+
   const handleSend = async (textToSend?: string) => {
     const query = textToSend || input;
     if (!query.trim() || loading) return;
@@ -214,8 +241,8 @@ export const ChatbotDrawer: React.FC<ChatbotDrawerProps> = ({
                   : 'bg-slate-800/90 text-slate-200 border border-slate-700/60'
               }`}
             >
-              {/* Contenido en texto con saltos de línea preservados */}
-              <div className="whitespace-pre-line">{m.text}</div>
+              {/* Contenido formateado en Markdown */}
+              <div className="space-y-0.5 text-xs leading-relaxed">{renderFormattedText(m.text)}</div>
 
               {/* Consulta SQL generada (colapsable con toggle) */}
               {m.sql && (

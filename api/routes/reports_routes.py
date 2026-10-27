@@ -9,6 +9,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/reports", tags=["Reportes"])
 
 
+def parse_json_field(val):
+    if val is None:
+        return []
+    if isinstance(val, (list, dict)):
+        return val
+    if isinstance(val, str):
+        try:
+            return json.loads(val)
+        except Exception:
+            return []
+    return []
+
+
 @router.get("", response_model=List[Dict[str, Any]])
 def get_reports_history(user: dict = Depends(require_viewer)):
     """Retorna el historial de reportes diarios generados por IA desde la base de datos PostgreSQL."""
@@ -25,8 +38,8 @@ def get_reports_history(user: dict = Depends(require_viewer)):
                 "report_date": str(r[1]),
                 "title": r[2],
                 "executive_summary": r[3],
-                "active_zones": json.loads(r[4]) if isinstance(r[4], str) else (r[4] or []),
-                "highlighted_events": json.loads(r[5]) if isinstance(r[5], str) else (r[5] or []),
+                "active_zones": parse_json_field(r[4]),
+                "highlighted_events": parse_json_field(r[5]),
                 "ai_verified": bool(r[6]),
                 "generated_at": r[7].isoformat() if hasattr(r[7], 'isoformat') else str(r[7]),
             })

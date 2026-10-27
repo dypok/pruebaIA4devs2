@@ -135,15 +135,11 @@ class CognitiveAgent:
 
     def classify_intent(self, prompt: str) -> str:
         """
-        Clasifica la intención del mensaje en:
-        - CONVERSATIONAL
-        - KNOWLEDGE
-        - STATUS
-        - ANALYTICS
+        Clasifica la intención del mensaje de forma robusta y determinista.
         """
         p = _normalize_text(prompt)
 
-        # 1. Reglas conversacionales rápidas
+        # 1. Reglas conversacionales rápidas (saludos, despedidas, cortesía)
         greetings = {"hola", "buenas", "buen dia", "buenos dias", "buenas tardes", "buenas noches", "hey", "hello", "hi", "saludos"}
         help_phrases = {"que puedes hacer", "que haces", "ayuda", "help", "como funciona", "opciones", "quien eres"}
         thanks_phrases = {"gracias", "muchas gracias", "ok", "vale", "listo", "perfecto", "adios", "chao", "hasta luego"}
@@ -155,38 +151,66 @@ class CognitiveAgent:
         if p in thanks_phrases:
             return "CONVERSATIONAL"
 
-        # 2. Estado de la plataforma / Telemetría
+        # 2. Señales analíticas prioritarias (preguntas sobre datos o eventos reales)
+        seismic_terms = [
+            "sismo", "sismos", "temblor", "temblores", "terremoto", "terremotos",
+            "magnitud", "magnitudes", "profundidad", "tsunami", "tsunamis",
+            "movimiento telurico"
+        ]
+        analytics_indicators = [
+            "donde", "cuando", "cual", "cuales", "cuanto", "cuantos", "cuantas",
+            "ultimo", "ultima", "ultimos", "ultimas", "reciente", "recientes",
+            "fuerte", "fuertes", "mayor", "mayores", "maximo", "maxima", "max",
+            "hoy", "ayer", "semana", "mes", "24h", "hora", "minuto",
+            "ranking", "top", "tabla", "grafica", "grafico", "promedio",
+            "chile", "japon", "japan", "california", "alaska", "panama", "peru", "mexico",
+            "hawaii", "indonesia", "colombia", "ecuador", "texas", "utah", "nevada", "oklahoma",
+            "mostrar", "lista", "listar", "ver", "dame", "buscar", "filtra", "filtrar",
+            "zona", "zonas", "region", "regiones", "pais", "paises"
+        ]
+
+        has_seismic = any(term in p for term in seismic_terms)
+        has_analytics_ind = any(ind in p for ind in analytics_indicators)
+
+        # Consultas directas sobre el último evento (ej. "donde fue el ultimo sismo", "ultimo temblor", "ultimo evento")
+        if any(w in p for w in ["ultimo", "reciente"]) and (has_seismic or any(w in p for w in ["donde", "cuando", "fue", "evento"])):
+            return "ANALYTICS"
+
+        # Término sísmico + indicador de consulta (ej. "sismos en chile", "sismo mas fuerte")
+        if has_seismic and has_analytics_ind:
+            # Excepción: preguntas teóricas conceptuales puras
+            conceptual_prefixes = ["que es", "que significa", "como se define", "por que ocurre", "por que tiembla", "que hacer en", "medidas de", "mochila de"]
+            if any(p.startswith(pref) for pref in conceptual_prefixes) and not any(w in p for w in ["donde", "cuando", "ultimo", "reciente", "hoy", "ayer", "fuerte", "tabla", "grafica"]):
+                return "KNOWLEDGE"
+            return "ANALYTICS"
+
+        # 3. Estado de la plataforma / Telemetría
         status_triggers = [
-            "cuantos sismos", "total de sismos", "datos cargados", "estado del sistema",
+            "total de sismos", "datos cargados", "estado del sistema",
             "salud de la plataforma", "origen de los datos", "de donde vienen los datos",
-            "cada cuanto se actualiza", "pipeline status", "cuantos registros",
+            "cada cuanto se actualiza", "pipeline status", "cuantos registros cargados",
             "estado del pipeline", "salud del sistema"
         ]
-        if any(trigger in p for trigger in status_triggers) and "mas fuertes" not in p and "ranking" not in p:
+        if any(trigger in p for trigger in status_triggers) and not any(w in p for w in ["mas fuerte", "mas reciente", "ultimo", "hoy"]):
             return "STATUS"
 
-        # 3. Conocimiento científico / divulgación / prevención
+        # 4. Conocimiento científico / divulgación / prevención
         knowledge_triggers = [
             "que es", "por que tiembla", "por que ocurren", "escala richter", "magnitud de momento",
             "falla de san andres", "falla geologica", "cinturon de fuego", "anillo de fuego",
             "que hacer en", "medidas de prevencion", "evacuar", "mochila de emergencia",
-            "epicentro", "hipocentro", "foco sismico", "como se produce un tsunami",
-            "placas tectonicas", "subduccion", "mercalli", "seguridad", "recomendaciones de seguridad"
+            "como se produce un tsunami", "placas tectonicas", "subduccion", "mercalli",
+            "seguridad", "recomendaciones de seguridad"
         ]
         if any(trigger in p for trigger in knowledge_triggers):
             return "KNOWLEDGE"
 
-        # 4. Señales analíticas (datos específicos, tablas, comparativas, gráficas)
-        analytics_triggers = [
-            "sismos", "terremoto", "temblor", "magnitud", "zona", "region", "fuerte",
-            "tsunami", "ranking", "grafica", "tabla", "promedio", "maximo", "recientes",
-            "chile", "japon", "california", "alaska", "panama", "peru", "mexico"
-        ]
-        if any(trigger in p for trigger in analytics_triggers):
+        # 5. Si menciona sismos o lugares geográficos conocidos, asumir analítica
+        if has_seismic or any(loc in p for loc in ["california", "alaska", "chile", "japon", "mexico", "peru", "hawaii"]):
             return "ANALYTICS"
 
-        # Si no encaja en analítica, evaluar como conocimiento general / conversacional
-        return "KNOWLEDGE" if len(p.split()) > 3 else "CONVERSATIONAL"
+        # Por defecto
+        return "CONVERSATIONAL" if len(p.split()) <= 3 else "KNOWLEDGE"
 
     def process_message(self, prompt: str) -> Dict[str, Any]:
         """
@@ -214,20 +238,20 @@ class CognitiveAgent:
         thanks_words = {"gracias", "muchas gracias", "ok", "vale", "listo", "perfecto", "adios", "chao"}
         
         if any(w in p for w in thanks_words):
-            reply = "¡Con gusto! Quedo a tu disposición si necesitas analizar algún otro evento sísmico o resolver dudas."
+            reply = "¡Con gusto! Quedo a tu disposición si necesitas consultar algún evento sísmico o resolver dudas."
         elif "que puedes hacer" in p or "ayuda" in p:
             reply = (
-                "Soy el asistente analítico y de gestión de riesgos de **SismoWatch** impulsado por IA local (Qwen 2.5:2b).\n\n"
+                "Soy el asistente analítico de **SismoWatch** impulsado por IA local (Qwen 2.5:2b).\n\n"
                 "Puedo ayudarte en tres áreas clave:\n"
-                "1. **Analítica de Datos Sísmicos:** Consultar sismos en tiempo real y del histórico de 30 días en MinIO/DuckDB, identificar máximas magnitudes y generar gráficos.\n"
+                "1. **Analítica de Datos Sísmicos:** Consultar sismos en tiempo real y del histórico de 30 días en DuckDB, identificar máximas magnitudes y generar gráficos.\n"
                 "2. **Divulgación y Ciencia:** Explicar conceptos de geofísica, fallas tectónicas, escalas de magnitud y dinámicas de subducción.\n"
                 "3. **Seguridad y Prevención:** Brindarte protocolos de evacuación, protección civil y alertas de tsunami.\n\n"
-                "💡 *Pruébame con preguntas como:* '¿Cuáles son los 5 sismos más fuertes?', '¿Qué es la falla de San Andrés?' o '¿Qué hacer durante un sismo?'."
+                "💡 *Pruébame con preguntas como:* '¿Dónde fue el último sismo?', '¿Cuáles son los 5 sismos más fuertes?' o '¿Qué es la falla de San Andrés?'."
             )
         else:
             reply = (
                 "¡Hola! 👋 Soy tu asistente inteligente de **SismoWatch**.\n\n"
-                "Estoy conectado a la red de monitoreo sísmico en tiempo real. Puedes hacerme preguntas sobre datos cuantitativos, conceptos científicos de sismología o medidas de protección civil.\n\n"
+                "Estoy conectado a la red de monitoreo sísmico en tiempo real. Puedes hacerme preguntas sobre datos cuantitativos, sismos recientes o medidas de protección civil.\n\n"
                 "¿En qué te puedo colaborar hoy?"
             )
 
@@ -327,50 +351,73 @@ class CognitiveAgent:
         }
 
     def _handle_analytics(self, prompt: str) -> Dict[str, Any]:
-        """Traduce lenguaje natural a SQL DuckDB, ejecuta sobre Parquets y entrega datos/gráficos."""
+        """Traduce lenguaje natural a SQL DuckDB, ejecuta sobre Parquets y entrega datos/gráficos estructurados."""
         clean_prompt = prompt.strip()
+        p_lower = _normalize_text(clean_prompt)
         sql_to_execute = None
+
+        is_latest_query = any(w in p_lower for w in ["ultimo", "ultima", "ultimos", "ultimas", "reciente", "recientes"]) and any(w in p_lower for w in ["sismo", "temblor", "terremoto", "donde", "cuando", "cual", "fue"])
+        is_strongest_query = any(w in p_lower for w in ["fuerte", "fuertes", "mayor", "mayores", "maximo", "maxima", "max", "potente", "grande", "grandes"])
+        is_tsunami_query = "tsunami" in p_lower
 
         # 1. Intentar Text-to-SQL con Qwen 2.5:2b
         try:
             sys_prompt = (
-                "Eres un asistente de datos SQL para DuckDB sobre la vista `earthquake_events` "
-                "(columnas: id, mag, place, time, longitude, latitude, depth_km, tsunami, sig).\n"
-                "Reglas estrictas:\n"
-                "1. Genera ÚNICAMENTE una consulta SQL válida comenzando con SELECT. Sin markdown ni explicaciones.\n"
-                "2. SIEMPRE incluye 'LIMIT 5' o 'LIMIT 10' si la consulta no es agregada (GROUP BY).\n"
-                "3. NUNCA devuelvas 'SELECT * FROM earthquake_events' sin LIMIT ni filtros.\n"
-                "4. Si piden los más fuertes, usa 'ORDER BY mag DESC LIMIT 5'.\n"
-                "5. Si piden los más recientes, usa 'ORDER BY time DESC LIMIT 8'."
+                "Eres un analista de datos SQL para DuckDB sobre la tabla/vista `earthquake_events` "
+                "(columnas disponibles: id, mag, place, time, longitude, latitude, depth_km, tsunami, sig).\n"
+                "Instrucciones estrictas:\n"
+                "1. Devuelve ÚNICAMENTE la consulta SQL comenzando con SELECT. Sin explicaciones ni formato markdown.\n"
+                "2. Si piden el último sismo o el más reciente, usa: "
+                "SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events ORDER BY time DESC LIMIT 1\n"
+                "3. Si piden los más fuertes o de mayor magnitud, usa: "
+                "SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events ORDER BY mag DESC LIMIT 5\n"
+                "4. Si piden sismos en una región o país, usa: "
+                "SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events WHERE LOWER(place) LIKE '%region%' ORDER BY time DESC LIMIT 5\n"
+                "5. Si piden dónde tiembla más o ranking de zonas, usa: "
+                "SELECT place, COUNT(*) as count, ROUND(AVG(mag), 2) as avg_mag FROM earthquake_events GROUP BY place ORDER BY count DESC LIMIT 5\n"
+                "6. NUNCA devuelvas consultas sin LIMIT."
             )
             payload = {
                 "model": self.model,
                 "prompt": f"{sys_prompt}\nPregunta del usuario: {clean_prompt}\nSQL:",
                 "stream": False,
-                "options": {"temperature": 0.1, "num_predict": 100}
+                "options": {"temperature": 0.1, "num_predict": 120}
             }
             resp = requests.post(self.ollama_url, json=payload, timeout=25)
             if resp.status_code == 200:
                 raw_sql = resp.json().get("response", "").strip()
-                sql_match = re.search(r"SELECT\s+.*", raw_sql, re.IGNORECASE | re.DOTALL)
+                clean_candidate = re.sub(r"^```(?:sql)?\s*", "", raw_sql, flags=re.IGNORECASE)
+                clean_candidate = re.sub(r"\s*```$", "", clean_candidate)
+                clean_candidate = clean_candidate.strip().rstrip(";")
+                sql_match = re.search(r"SELECT\s+.*", clean_candidate, re.IGNORECASE | re.DOTALL)
                 if sql_match:
-                    candidate = sql_match.group(0).split(";")[0].strip()
+                    candidate = sql_match.group(0).strip()
                     if candidate.upper().startswith("SELECT"):
                         sql_to_execute = candidate
         except Exception as e:
             logger.warning(f"Ollama no disponible para Text-to-SQL ({e}); activando motor determinista.")
 
-        # 2. Fallback determinista seguro de SQL
+        # 2. Fallback determinista de alta fidelidad si no se obtuvo SQL del modelo
         if not sql_to_execute:
-            p_lower = clean_prompt.lower()
-            if "fuerte" in p_lower or "mayor" in p_lower or "max" in p_lower:
-                sql_to_execute = "SELECT place, mag, depth_km, time FROM earthquake_events ORDER BY mag DESC LIMIT 5"
-            elif "region" in p_lower or "zona" in p_lower or "donde" in p_lower:
+            if is_latest_query:
+                limit_n = 5 if any(w in p_lower for w in ["ultimos", "recientes"]) else 1
+                sql_to_execute = f"SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events ORDER BY time DESC LIMIT {limit_n}"
+            elif is_strongest_query:
+                sql_to_execute = "SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events ORDER BY mag DESC LIMIT 5"
+            elif is_tsunami_query:
+                sql_to_execute = "SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events WHERE tsunami = 1 ORDER BY time DESC LIMIT 5"
+            elif any(w in p_lower for w in ["donde", "region", "zona", "mas sismos"]):
                 sql_to_execute = "SELECT place, COUNT(*) as count, ROUND(AVG(mag), 2) as avg_mag FROM earthquake_events GROUP BY place ORDER BY count DESC LIMIT 5"
-            elif "tsunami" in p_lower:
-                sql_to_execute = "SELECT place, mag, tsunami, time FROM earthquake_events WHERE tsunami = 1 ORDER BY time DESC LIMIT 5"
             else:
-                sql_to_execute = "SELECT place, mag, depth_km, time FROM earthquake_events ORDER BY time DESC LIMIT 8"
+                matched_place = None
+                for loc in ["california", "alaska", "hawaii", "nevada", "texas", "utah", "chile", "japon", "japan", "mexico", "peru", "panama", "indonesia", "colombia"]:
+                    if loc in p_lower:
+                        matched_place = loc
+                        break
+                if matched_place:
+                    sql_to_execute = f"SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events WHERE LOWER(place) LIKE '%{matched_place}%' ORDER BY time DESC LIMIT 5"
+                else:
+                    sql_to_execute = "SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events ORDER BY time DESC LIMIT 5"
 
         # 3. Salvaguarda de límite obligatorio
         upper_sql = sql_to_execute.upper()
@@ -392,13 +439,54 @@ class CognitiveAgent:
 
             if row_count > 0:
                 top_item = data[0]
-                if "mag" in top_item and "place" in top_item:
+                place_str = top_item.get("place", "Ubicación no especificada")
+                mag_val = top_item.get("mag", "N/A")
+                depth_val = top_item.get("depth_km", "N/A")
+                time_val = top_item.get("time", "")
+
+                if (is_latest_query or "ultimo" in p_lower) and row_count == 1:
                     reply = (
-                        f"He consultado los datos en DuckDB ({row_count} registros recuperados). "
-                        f"El evento más destacado fue de magnitud **{top_item['mag']}** en *'{top_item['place']}'*."
+                        f"📍 **Último sismo registrado:**\n\n"
+                        f"• **Epicentro:** *{place_str}*\n"
+                        f"• **Magnitud:** **{mag_val} Mw**\n"
+                        f"• **Profundidad:** **{depth_val} km**\n"
+                        f"• **Hora:** {time_val}\n\n"
+                        f"*(Información en tiempo real sincronizada desde USGS en DuckDB)*"
+                    )
+                elif (is_latest_query or "ultimo" in p_lower) and row_count > 1:
+                    reply = (
+                        f"📍 **Últimos sismos registrados:**\n\n"
+                        f"El sismo más reciente ocurrió en *{place_str}* con magnitud **{mag_val} Mw** ({time_val}). "
+                        f"Se presentan los {row_count} eventos más recientes:"
+                    )
+                elif is_strongest_query:
+                    reply = (
+                        f"💥 **Sismo de mayor magnitud registrado:**\n\n"
+                        f"• **Epicentro:** *{place_str}*\n"
+                        f"• **Magnitud:** **{mag_val} Mw**\n"
+                        f"• **Profundidad:** **{depth_val} km**\n"
+                        f"• **Hora:** {time_val}\n\n"
+                        f"Se presentan los {row_count} sismos de mayor intensidad:"
+                    )
+                elif is_tsunami_query:
+                    reply = (
+                        f"🌊 **Eventos sísmicos con alerta de tsunami:**\n\n"
+                        f"Se encontraron **{row_count} eventos** con alerta de tsunami. "
+                        f"El evento principal se registró en *{place_str}* con magnitud **{mag_val} Mw**."
+                    )
+                elif "count" in top_item and "place" in top_item:
+                    reply = (
+                        f"📊 **Zonas con mayor concentración sísmica:**\n\n"
+                        f"La zona con mayor frecuencia es *'{top_item['place']}'* con **{top_item.get('count', 0)} sismos** "
+                        f"y una magnitud promedio de **{top_item.get('avg_mag', 0)} Mw**."
+                    )
+                elif "mag" in top_item and "place" in top_item:
+                    reply = (
+                        f"📊 Se recuperaron **{row_count} eventos sísmicos** en DuckDB.\n\n"
+                        f"El evento principal es de magnitud **{mag_val} Mw** en *'{place_str}'* ({time_val})."
                     )
                 else:
-                    reply = f"He ejecutado la consulta SQL sobre los eventos en DuckDB y recuperé {row_count} registros."
+                    reply = f"Consulta analítica ejecutada exitosamente sobre DuckDB ({row_count} registros recuperados)."
             else:
                 reply = "La consulta se ejecutó exitosamente pero no se encontraron registros que coincidan con esos criterios."
 

@@ -124,6 +124,24 @@ export const AppContent: React.FC = () => {
     }
   }, [isAuthenticated]);
 
+  const refreshReports = async () => {
+    try {
+      const data = await fetchReports();
+      if (data) {
+        setReports(data);
+      }
+    } catch (err: any) {
+      console.error('Error refrescando reportes:', err);
+    }
+  };
+
+  // Refrescar reportes automáticamente al ingresar a la pestaña de reportes
+  useEffect(() => {
+    if (isAuthenticated && activeTab === 'reports') {
+      refreshReports();
+    }
+  }, [isAuthenticated, activeTab]);
+
   // Actualización específica de tabla al cambiar filtros o paginación
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -263,12 +281,12 @@ export const AppContent: React.FC = () => {
 
         {/* Tab 2: Reportes de IA */}
         {activeTab === 'reports' && (
-          <ReportsViewer reports={reports} loading={loading} />
+          <ReportsViewer reports={reports} loading={loading} onRefresh={refreshReports} />
         )}
 
         {/* Tab 3: Pipeline y Gobernanza */}
         {activeTab === 'pipeline' && (
-          <PipelineStatus />
+          <PipelineStatus onRefreshReports={refreshReports} />
         )}
       </main>
 

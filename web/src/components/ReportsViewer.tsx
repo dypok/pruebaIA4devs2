@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { FileText, CheckCircle2, Download, Calendar, Sparkles, RefreshCw, Lock } from 'lucide-react';
 import { AiReport } from '../types';
 import { useAuth } from '../context/AuthContext';
@@ -7,22 +7,48 @@ import { triggerAiRegenerateApi } from '../services/api';
 interface ReportsViewerProps {
   reports: AiReport[];
   loading: boolean;
+  onRefresh: () => Promise<void> | void;
 }
 
-export const ReportsViewer: React.FC<ReportsViewerProps> = ({ reports, loading }) => {
+export const ReportsViewer: React.FC<ReportsViewerProps> = ({ reports, loading, onRefresh }) => {
   const { isAdmin } = useAuth();
   const [selectedReport, setSelectedReport] = useState<AiReport | null>(reports[0] || null);
   const [regenerating, setRegenerating] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [regenMsg, setRegenMsg] = useState<string | null>(null);
+
+  // Mantener el reporte seleccionado sincronizado cuando se actualiza la lista de reportes
+  useEffect(() => {
+    if (reports && reports.length > 0) {
+      if (!selectedReport || !reports.some((r) => r.id === selectedReport.id)) {
+        setSelectedReport(reports[0]);
+      }
+    } else {
+      setSelectedReport(null);
+    }
+  }, [reports]);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await onRefresh();
+    } catch (e: any) {
+      console.error('Error al actualizar reportes:', e);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   const handleRegenerate = async () => {
     setRegenerating(true);
     setRegenMsg(null);
     try {
       const res = await triggerAiRegenerateApi();
-      setRegenMsg(res.message || 'Regeneración iniciada.');
+      setRegenMsg(res.message || 'Reporte generado con éxito.');
+      // Refrescar inmediatamente los reportes desde PostgreSQL
+      await onRefresh();
     } catch (e: any) {
-      setRegenMsg(e.message || 'Error al regenerar');
+      setRegenMsg(e.message || 'Error al regenerar reporte');
     } finally {
       setRegenerating(false);
     }
@@ -48,25 +74,34 @@ export const ReportsViewer: React.FC<ReportsViewerProps> = ({ reports, loading }
             0 registros encontrados en PostgreSQL (tabla: curated.ai_reports).
           </p>
         </div>
-        {isAdmin ? (
-          <div className="pt-2">
+        <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
+          {isAdmin ? (
             <button
               onClick={handleRegenerate}
-              disabled={regenerating}
+              disabled={regenerating || isRefreshing}
               className="inline-flex items-center space-x-2 px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold rounded transition-colors shadow-lg shadow-sky-600/20"
             >
               <RefreshCw className={`w-4 h-4 ${regenerating ? 'animate-spin' : ''}`} />
               <span>{regenerating ? 'Generando con Qwen 2.5:2b...' : 'Generar Primer Reporte con IA'}</span>
             </button>
-            {regenMsg && (
-              <div className="mt-3 p-3 bg-sky-500/10 border border-sky-500/20 text-sky-400 text-xs font-mono rounded max-w-md mx-auto">
-                {regenMsg}
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="text-xs text-slate-500 font-mono">
-            La generación inicial de reportes con IA requiere rol de Administrador.
+          ) : (
+            <div className="text-xs text-slate-500 font-mono">
+              La generación de reportes con IA requiere rol de Administrador.
+            </div>
+          )}
+          <button
+            onClick={handleRefresh}
+            disabled={isRefreshing || regenerating}
+            className="inline-flex items-center space-x-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded transition-colors border border-slate-700"
+            title="Consultar nuevamente si ya existen reportes en PostgreSQL"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <span>{isRefreshing ? 'Consultando BD...' : 'Comprobar Base de Datos'}</span>
+          </button>
+        </div>
+        {regenMsg && (
+          <div className="mt-3 p-3 bg-sky-500/10 border border-sky-500/20 text-sky-400 text-xs font-mono rounded max-w-md mx-auto">
+            {regenMsg}
           </div>
         )}
       </div>
@@ -80,11 +115,21 @@ export const ReportsViewer: React.FC<ReportsViewerProps> = ({ reports, loading }
       
       {/* Columna Izquierda: Historial de Reportes */}
       <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-4 space-y-3">
-        <div className="flex items-center space-x-2 border-b border-slate-800 pb-2.5">
-          <FileText className="w-4 h-4 text-sky-400" />
-          <h3 className="text-xs font-mono uppercase tracking-wider text-slate-300 font-semibold">
-            Historial de Informes Diarios
-          </h3>
+        <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+          <div className="flex items-center space-x-2">
+            <FileText className="w-4 h-4 text-sky-400" />
+            <h3 className="text-xs font-mono uppercase tracking-wider text-slate-300 font-semibold">
+              Historial de Informes ({reports.length})
+            </h3>
+          </div>
+          <button
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="text-slate-400 hover:text-slate-200 p-1 rounded hover:bg-slate-800 transition-colors"
+            title="Recargar lista de reportes"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+          </button>
         </div>
 
         <div className="space-y-2">
@@ -132,6 +177,16 @@ export const ReportsViewer: React.FC<ReportsViewerProps> = ({ reports, loading }
 
               {/* Botones de Acción */}
               <div className="flex items-center space-x-2">
+                <button
+                  onClick={handleRefresh}
+                  disabled={isRefreshing || regenerating}
+                  className="flex items-center space-x-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium rounded transition-colors"
+                  title="Recargar reportes desde PostgreSQL"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 text-slate-400 ${isRefreshing ? 'animate-spin' : ''}`} />
+                  <span>{isRefreshing ? 'Actualizando...' : 'Actualizar'}</span>
+                </button>
+
                 {isAdmin ? (
                   <button
                     onClick={handleRegenerate}
@@ -185,12 +240,15 @@ export const ReportsViewer: React.FC<ReportsViewerProps> = ({ reports, loading }
                   Zonas con Mayor Concentración
                 </h4>
                 <ul className="space-y-1.5 text-xs text-slate-300">
-                  {current.active_zones.map((z, idx) => (
+                  {(current.active_zones || []).map((z, idx) => (
                     <li key={idx} className="flex justify-between border-b border-slate-800/40 pb-1">
                       <span>{z.place}</span>
                       <span className="font-mono font-semibold text-sky-400">{z.count} sismos</span>
                     </li>
                   ))}
+                  {(!current.active_zones || current.active_zones.length === 0) && (
+                    <li className="text-slate-500 italic">No hay zonas activas registradas.</li>
+                  )}
                 </ul>
               </div>
 
@@ -199,12 +257,17 @@ export const ReportsViewer: React.FC<ReportsViewerProps> = ({ reports, loading }
                   Eventos Más Significativos
                 </h4>
                 <ul className="space-y-1.5 text-xs text-slate-300">
-                  {current.highlighted_events.map((e, idx) => (
+                  {(current.highlighted_events || []).map((e, idx) => (
                     <li key={idx} className="flex justify-between border-b border-slate-800/40 pb-1">
                       <span className="truncate max-w-[180px]">{e.place}</span>
-                      <span className="font-mono font-semibold text-amber-400">{e.mag.toFixed(1)} Mw ({e.depth_km} km)</span>
+                      <span className="font-mono font-semibold text-amber-400">
+                        {typeof e.mag === 'number' ? e.mag.toFixed(1) : (e.mag || '0.0')} Mw ({e.depth_km ?? 0} km)
+                      </span>
                     </li>
                   ))}
+                  {(!current.highlighted_events || current.highlighted_events.length === 0) && (
+                    <li className="text-slate-500 italic">No hay eventos destacados registrados.</li>
+                  )}
                 </ul>
               </div>
             </div>

@@ -211,6 +211,15 @@ def trigger_ai_report_regeneration(user: dict = Depends(require_admin)):
             "report_date": report_date,
             "total_events": kpis["total_events_24h"],
             "max_magnitude": kpis["max_magnitude"],
+            "report": {
+                "report_date": report_date,
+                "title": title,
+                "executive_summary": narrative,
+                "active_zones": active_zones,
+                "highlighted_events": highlighted,
+                "ai_verified": True,
+                "generated_at": now.isoformat(),
+            }
         }
     except Exception as e:
         logger.error(f"Error guardando reporte en Postgres: {e}")
