@@ -16,7 +16,23 @@ SuperApp requiere monitorear la sismicidad global en tiempo casi real para antic
 
 ---
 
-## 2. Diagrama de Arquitectura Data Lakehouse
+## 2. Diagrama de Flujo Medallion (Bronze ➔ Silver ➔ Gold)
+
+```mermaid
+flowchart LR
+    USGS["API USGS"] -->|Ingesta cruda| Bronze["BRONZE (MinIO S3)<br/>GeoJSON inmutable"]
+    Bronze -->|Apache Spark: Desanidar + Tipar| Silver["SILVER (MinIO Parquet)<br/>VALID + INVALID con motivos"]
+    
+    Silver -.->|Si hay INVALID| AlertaAirflow["⚠️ Alerta Inmediata<br/>en Airflow"]
+    Silver -->|Filtro: solo VALID + Enriquecimiento| Gold["GOLD (MinIO Parquet)<br/>Datos certificados + Agregaciones"]
+    
+    Gold -->|read_parquet() con httpfs| DuckDB["DuckDB Engine<br/>(FastAPI)"]
+    DuckDB --> Chatbot["Chatbot Qwen 2.5:2b<br/>& Dashboard Web"]
+```
+
+---
+
+## 3. Diagrama Integral de Componentes de Punta a Punta
 
 ```mermaid
 flowchart TD
@@ -35,12 +51,13 @@ flowchart TD
 
     subgraph CapaLakehouse["3. Object Storage Data Lake (MinIO S3)"]
         direction TB
-        MINIO_RAW[("Bucket: sismowatch-lake/raw/<br/>year=YYYY/month=MM/day=DD/<br/>events_HHMMSS.geojson")]
-        MINIO_GOLD[("Bucket: sismowatch-lake/gold/<br/>earthquake_events/year=YYYY/month=MM/<br/>*.snappy.parquet")]
+        MINIO_RAW[("BRONZE: sismowatch-lake/bronze/<br/>year=YYYY/month=MM/day=DD/<br/>events_HHMMSS.geojson")]
+        MINIO_SILVER[("SILVER: sismowatch-lake/silver/<br/>earthquake_events/year=YYYY/month=MM/<br/>Parquet: VALID + INVALID")]
+        MINIO_GOLD[("GOLD: sismowatch-lake/gold/<br/>earthquake_events/year=YYYY/month=MM/<br/>Parquet certificado (solo VALID)")]
     end
 
     subgraph CapaProcesamiento["4. Procesamiento Distribuido (Apache Spark)"]
-        SPARK_JOB["Apache Spark (PySpark)<br/>• Lectura de MinIO Raw (S3A)<br/>• Desanidado y transformación<br/>• Validación con Pandera<br/>• Escritura a MinIO Gold Parquet"]
+        SPARK_JOB["Apache Spark (PySpark)<br/>• Lectura de Bronze S3A<br/>• Desanidado, tipado y Pandera<br/>• Escritura a Silver Parquet<br/>• Promoción a Gold Parquet"]
         ANOMALY_ML["Detección de Anomalías<br/>(IsolationForest & Z-score)"]
     end
 
@@ -49,7 +66,7 @@ flowchart TD
     end
 
     subgraph CapaConsulta["6. Motor Vectorizado OLAP (DuckDB)"]
-        DUCKDB_ENGINE["DuckDB In-Memory Engine<br/>• Conexión HTTPFS a MinIO S3 (minio:9000)<br/>• Lectura directa de Parquet sin bloqueos<br/>• View: earthquake_events"]
+        DUCKDB_ENGINE["DuckDB In-Memory Engine<br/>• Conexión HTTPFS a MinIO S3 (minio:9000)<br/>• Lectura de Gold sin bloqueos<br/>• View: earthquake_events"]
     end
 
     subgraph CapaIA["7. Inteligencia Artificial Local (Ollama)"]
@@ -79,9 +96,10 @@ flowchart TD
     DAG_INGEST -->|Trigger| DAG_TRANSFORM
 
     MINIO_RAW -->|Lee con S3A| SPARK_JOB
-    SPARK_JOB -->|Escribe Parquets particionados| MINIO_GOLD
-    SPARK_JOB -->|Registra métricas| POSTGRES_DB
+    SPARK_JOB -->|Escribe Parquets desanidados| MINIO_SILVER
     SPARK_JOB -.->|Si hay registros INVALID| ALERTA_TASK
+    SPARK_JOB -->|Promueve conformes| MINIO_GOLD
+    SPARK_JOB -->|Registra métricas| POSTGRES_DB
 
     MINIO_GOLD --> ANOMALY_ML
     ANOMALY_ML -->|Alertas| POSTGRES_DB
@@ -102,39 +120,18 @@ flowchart TD
 
 ---
 
-## 3. Justificación Técnica: MinIO + Spark + Parquet + DuckDB
+## 4. Estructura de Capas en MinIO S3 (`sismowatch-lake`)
 
-| Componente | Rol en la Arquitectura | Justificación Técnica |
-| :--- | :--- | :--- |
-| **Object Storage** | **MinIO (S3 Compatible)** | Estándar de facto en arquitecturas Data Lakehouse empresariales. Proporciona almacenamiento de objetos distribuido, alta concurrencia, compatibilidad 100% con la API de Amazon S3 (`s3://`) y consola web visual en puerto 9001. Aísla el almacenamiento físico del cómputo. |
-| **Procesamiento** | **Apache Spark (PySpark)** | Lee los datos crudos desde MinIO (`s3a://sismowatch-lake/raw/`), aplica desanidado, tipado, validación con Pandera y escribe en MinIO (`s3a://sismowatch-lake/gold/earthquake_events/`) en formato Parquet particionado. |
-| **Formato Gold** | **Apache Parquet (Snappy)** | Formato columnar abierto que comprime los datos hasta un 85% y permite *predicate pushdown* a nivel de bloques para no escanear datos innecesarios. |
-| **Motor Analítico** | **DuckDB (vía httpfs)** | Lee directamente los archivos Parquet desde MinIO sin descargarlos completos ni causar bloqueos de base de datos (`lock`). Ejecuta agregaciones en memoria en menos de 5 ms. |
-| **Chatbot Text-to-SQL** | **Qwen 2.5:2b (Ollama)** | Traduce preguntas en lenguaje natural a consultas DuckDB SQL sobre la vista montada desde MinIO. |
-| **Metastore / RBAC** | **PostgreSQL** | Administra usuarios, hashes bcrypt, tokens JWT, métricas de calidad y la metadata de Airflow. |
-
----
-
-## 4. Estructura de Buckets en MinIO
-
-### Bucket: `sismowatch-lake`
-1. **Prefijo Raw (Bronze):**
-   ```
-   sismowatch-lake/raw/year=2026/month=10/day=27/events_115000.geojson
-   ```
-   Almacena el payload GeoJSON original inmutable.
-2. **Prefijo Gold (Curated Parquet):**
-   ```
-   sismowatch-lake/gold/earthquake_events/
-   ├── year=2026/month=10/part-00000.snappy.parquet
-   └── year=2026/month=10/part-00001.snappy.parquet
-   ```
-   Particionado Hive-style listo para escaneo columnar.
+| Capa | Ruta en MinIO S3 | Formato | Contenido y Función |
+| :--- | :--- | :--- | :--- |
+| **BRONZE** | `s3://sismowatch-lake/bronze/` | `.geojson` / `.json` | Almacenamiento inmutable del feed crudo tal como llega de la API de USGS. Permite reprocesar cualquier histórico en caso de cambios de lógica. |
+| **SILVER** | `s3://sismowatch-lake/silver/earthquake_events/` | `.snappy.parquet` | Datos aplanados y tipados por Apache Spark. Contiene todos los eventos con su estado de ciclo de vida (`VALID` o `INVALID`). Si hay registros no conformes, se preserva el motivo en `validation_error` y se detona la alerta en Airflow para auditoría. |
+| **GOLD** | `s3://sismowatch-lake/gold/earthquake_events/` | `.snappy.parquet` | Datos analíticos certificados. Contiene **únicamente registros con estado `VALID`**, enriquecidos con categorizaciones de riesgo y listos para ser consumidos por **DuckDB** para el dashboard y el Chatbot. |
 
 ---
 
 ## 5. Alerta Inmediata en Airflow y Resiliencia `try/catch`
 1. Cada llamada a la API de USGS y cada operación de I/O en MinIO está envuelta en bloques `try/catch`.
-2. Si un registro en el lote incumple las reglas de Pandera, se marca como `INVALID`.
+2. Si un registro en el lote incumple las reglas de Pandera, se marca como `INVALID` en la capa **Silver**.
 3. **Alerta Inmediata:** Si existen registros con estado `INVALID`, Airflow ejecuta la tarea `notify_invalid_records` que emite una alerta destacada en los logs y la interfaz para que el operador de datos pueda corregirlo.
-4. Los registros válidos se consolidan en el bucket Gold de MinIO sin interrumpir el flujo.
+4. Los registros válidos continúan hacia la capa **Gold** de MinIO sin interrumpir el flujo.

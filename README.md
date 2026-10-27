@@ -1,27 +1,48 @@
 # 🌍 SismoWatch: Plataforma de Monitoreo Sísmico Global en Tiempo Real
 
-> **Arquitectura Data Lakehouse Moderna: MinIO (S3 Object Storage), Apache Spark (PySpark), Almacenamiento Columnar Parquet en Capa Gold, Motor Vectorizado DuckDB, Apache Airflow, Inteligencia Artificial Local (Qwen 2.5:2b con Ollama) y Frontend React + Vite.**
+> **Arquitectura Data Lakehouse Moderna: MinIO (S3 Object Storage), Apache Spark (PySpark), Arquitectura Medallion (Bronze ➔ Silver ➔ Gold), Motor Vectorizado DuckDB, Apache Airflow, Inteligencia Artificial Local (Qwen 2.5:2b con Ollama) y Frontend React + Vite.**
 
 ---
 
 ## 📋 Tabla de Contenidos
-1. [Propósito del Negocio y Arquitectura Lakehouse](#-propósito-del-negocio-y-arquitectura-lakehouse)
-2. [El Poder de MinIO + Spark + Parquet + DuckDB](#-el-poder-de-minio--spark--parquet--duckdb)
-3. [Puesta en Marcha (Un solo comando)](#-puesta-en-marcha-un-solo-comando)
-4. [Estrategia de Calidad de Datos y Alertas](#-estrategia-de-calidad-de-datos-y-alertas)
-5. [Seguridad y Mínimo Privilegio](#-seguridad-y-mínimo-privilegio)
-6. [Inteligencia Artificial y Chatbot DuckDB](#-inteligencia-artificial-y-chatbot-duckdb)
-7. [Transmisión en Tiempo Real (SSE)](#-transmisión-en-tiempo-real-sse)
-8. [Diseño Frontend Profesional](#-diseño-frontend-profesional)
-9. [Suite de Pruebas Automatizadas](#-suite-de-pruebas-automatizadas)
+1. [Flujo de Datos Medallion (Bronze ➔ Silver ➔ Gold)](#-flujo-de-datos-medallion-bronze--silver--gold)
+2. [Arquitectura General Lakehouse](#-arquitectura-general-lakehouse)
+3. [El Rol de MinIO + Spark + DuckDB](#-el-rol-de-minio--spark--duckdb)
+4. [Puesta en Marcha (Un solo comando)](#-puesta-en-marcha-un-solo-comando)
+5. [Estrategia de Calidad de Datos y Alertas](#-estrategia-de-calidad-de-datos-y-alertas)
+6. [Seguridad y Mínimo Privilegio](#-seguridad-y-mínimo-privilegio)
+7. [Inteligencia Artificial y Chatbot DuckDB](#-inteligencia-artificial-y-chatbot-duckdb)
+8. [Transmisión en Tiempo Real (SSE)](#-transmisión-en-tiempo-real-sse)
+9. [Diseño Frontend Profesional](#-diseño-frontend-profesional)
 10. [Preguntas Guía para la Sustentación](#-preguntas-guía-para-la-sustentación)
 
 ---
 
-## 🎯 Propósito del Negocio y Arquitectura Lakehouse
+## 🏅 Flujo de Datos Medallion (Bronze ➔ Silver ➔ Gold)
 
-SuperApp requiere monitorear la sismicidad global para priorizar decisiones de riesgo y contingencia operativa en sus redes de transporte, distribución y logística.
-**SismoWatch** toma el feed público de la **USGS (United States Geological Survey)** y lo transforma mediante una arquitectura **Data Lakehouse** de nivel empresarial:
+```mermaid
+flowchart LR
+    USGS["API USGS"] -->|Ingesta cruda| Bronze["BRONZE (MinIO S3)<br/>GeoJSON inmutable"]
+    Bronze -->|Apache Spark: Desanidar + Tipar| Silver["SILVER (MinIO Parquet)<br/>VALID + INVALID con motivos"]
+    
+    Silver -.->|Si hay INVALID| AlertaAirflow["⚠️ Alerta Inmediata<br/>en Airflow"]
+    Silver -->|Filtro: solo VALID + Enriquecimiento| Gold["GOLD (MinIO Parquet)<br/>Datos certificados + Agregaciones"]
+    
+    Gold -->|read_parquet() con httpfs| DuckDB["DuckDB Engine<br/>(FastAPI)"]
+    DuckDB --> Chatbot["Chatbot Qwen 2.5:2b<br/>& Dashboard Web"]
+```
+
+### Detalle de las 3 Capas en MinIO (`sismowatch-lake`)
+
+| Capa | Ruta en MinIO S3 | Formato | Contenido y Función |
+| :--- | :--- | :--- | :--- |
+| **BRONZE** | `s3://sismowatch-lake/bronze/` | `.geojson` / `.json` | Payload GeoJSON crudo e inmutable tal como llega de la API de USGS. |
+| **SILVER** | `s3://sismowatch-lake/silver/earthquake_events/` | `.snappy.parquet` | Datos desanidados y tipados por Apache Spark. Contiene todos los eventos con `processing_status` (`VALID` o `INVALID` con `validation_error`). Si hay fallos, dispara la alerta inmediata en Airflow para auditoría. |
+| **GOLD** | `s3://sismowatch-lake/gold/earthquake_events/` | `.snappy.parquet` | Datos analíticos certificados. Contiene **únicamente registros con estado `VALID`**, enriquecidos y listos para ser consumidos por **DuckDB** para el dashboard y el Chatbot. |
+
+---
+
+## 🎯 Arquitectura General Lakehouse
 
 ```
 [ USGS Feed API ]
@@ -30,16 +51,16 @@ SuperApp requiere monitorear la sismicidad global para priorizar decisiones de r
 [ Apache Airflow Ingestion DAG ]
        │
        ▼ (Escribe GeoJSON inmutable vía S3)
-[ MinIO S3 Object Storage: sismowatch-lake/raw/ ]
+[ MinIO: sismowatch-lake/bronze/ ]
        │
        ▼ (PySpark Transformation Job)
-[ Apache Spark: Limpieza, tipado y validación de calidad ]
+[ MinIO: sismowatch-lake/silver/ (Parquet: VALID + INVALID) ]
        │
-       ├─► (Si hay registros inválidos) ──► [ Alerta Inmediata en Airflow ]
-       ▼ (Escritura columnar particionada por fecha)
-[ MinIO S3 Object Storage: sismowatch-lake/gold/ (Archivos Parquet) ]
+       ├─► (Si hay registros INVALID) ──► [ Alerta Inmediata en Airflow ]
+       ▼ (Filtro: solo registros certificados VALID)
+[ MinIO: sismowatch-lake/gold/ (Parquet certificado) ]
        │
-       ▼ (Lectura directa vectorizada sin bloqueos con read_parquet)
+       ▼ (Lectura directa vectorizada sin bloqueos vía httpfs)
 [ Motor Analítico DuckDB (FastAPI) ] ◄──► [ Chatbot Qwen 2.5:2b (Ollama) ]
        │                                  (Text-to-SQL ejecutado sobre Parquet)
        ▼ (REST API + Server-Sent Events)
@@ -50,13 +71,13 @@ SuperApp requiere monitorear la sismicidad global para priorizar decisiones de r
 
 ---
 
-## ⚡ El Poder de MinIO + Spark + Parquet + DuckDB
+## ⚡ El Rol de MinIO + Spark + DuckDB
 
-1. **MinIO (S3 Object Storage):** Almacenamiento centralizado compatible con Amazon S3. Administra el bucket `sismowatch-lake` separando el dato crudo (`raw/`) del dato procesado (`gold/`). Dispone de consola web en el puerto `9001`.
-2. **Apache Spark en la Transformación:** Lee desde MinIO, aísla y alana los payloads GeoJSON masivos de USGS, aplica reglas de calidad con Pandera y genera archivos **Apache Parquet** comprimidos con Snappy en `sismowatch-lake/gold/earthquake_events/`.
+1. **MinIO (S3 Object Storage):** Almacenamiento centralizado compatible con Amazon S3. Administra el bucket `sismowatch-lake` separando `bronze/`, `silver/` y `gold/`. Consola web en puerto `9001`.
+2. **Apache Spark en la Transformación:** Lee de Bronze, aísla y aplana los payloads GeoJSON masivos de USGS, aplica reglas de calidad con Pandera y genera archivos **Apache Parquet** comprimidos con Snappy en Silver y Gold.
 3. **DuckDB como Motor Analítico y de Chatbot:** 
    - El backend de FastAPI utiliza DuckDB con la extensión `httpfs` conectada a MinIO (`http://minio:9000`).
-   - DuckDB monta la vista:
+   - DuckDB monta la vista sobre los Parquets de la capa Gold:
      ```sql
      CREATE VIEW earthquake_events AS 
      SELECT * FROM read_parquet('s3://sismowatch-lake/gold/earthquake_events/**/*.parquet');
@@ -82,28 +103,6 @@ docker compose up -d
 | **Consola MinIO (S3 Lake)** | [http://localhost:9001](http://localhost:9001) | `minioadmin` / `minioadmin2026!` |
 | **Airflow Webserver** | [http://localhost:8080](http://localhost:8080) | `admin` / `admin_sismowatch_airflow_2026!` |
 | **Inferencia Ollama** | [http://localhost:11434](http://localhost:11434) | Modelo: `qwen2.5:2b` |
-
----
-
-## 🛡️ Estrategia de Calidad de Datos y Alertas
-
-- **Reglas de Pandera:** Coordenadas latitud $[-90, 90]$, longitud $[-180, 180]$, magnitud $[-2.0, 10.0]$, profundidad $[-10.0, 1000.0]$ km.
-- **Máquina de Estados:** `PENDING`, `VALID`, `INVALID`, `CORRECTED`.
-- **Alerta Inmediata en Airflow:** Si un registro no cumple las especificaciones, la tarea `notify_invalid_records` emite una alerta destacada en los logs y en la interfaz de Airflow para advertir al operador.
-- **Resiliencia:** Bloques `try/catch` integrales protegen el flujo para que los datos válidos sigan procesándose hacia los Parquet de la capa Gold sin caídas del sistema.
-
----
-
-## 🤖 Inteligencia Artificial y Chatbot DuckDB
-
-- **Chatbot con Qwen 2.5:2b (Ollama):** 
-  - El usuario consulta en español: *"¿Cuáles fueron los 3 sismos más fuertes hoy?"*.
-  - El LLM genera la consulta SQL de solo lectura para DuckDB:
-    ```sql
-    SELECT place, mag, time, depth_km FROM earthquake_events ORDER BY mag DESC LIMIT 3;
-    ```
-  - DuckDB lee los Parquet de MinIO y ejecuta la consulta instantáneamente.
-  - El chatbot redacta la respuesta en lenguaje natural y muestra la consulta ejecutada en la interfaz.
 
 ---
 
