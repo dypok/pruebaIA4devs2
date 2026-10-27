@@ -3,7 +3,7 @@ import re
 import time
 import json
 import logging
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, List
 import requests
 
 logger = logging.getLogger(__name__)

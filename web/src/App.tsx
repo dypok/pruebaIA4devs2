@@ -98,7 +98,7 @@ export const AppContent: React.FC = () => {
   useEffect(() => {
     const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
     const token = localStorage.getItem('sismowatch_token');
-    const sseUrl = `${API_BASE}/api/stream`;
+    const sseUrl = token ? `${API_BASE}/api/stream?token=${encodeURIComponent(token)}` : `${API_BASE}/api/stream`;
 
     let eventSource: EventSource | null = null;
     try {

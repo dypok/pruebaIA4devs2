@@ -160,7 +160,7 @@ class DuckDBService:
             SELECT id, mag, place, strftime(time, '%Y-%m-%dT%H:%M:%SZ') as time, longitude, latitude, depth_km, tsunami, sig, status, mag_type 
             FROM earthquake_events 
             WHERE {where_sql} 
-            ORDER BY events_memory.time DESC 
+            ORDER BY time DESC 
             LIMIT ? OFFSET ?;
             """,  # nosec B608
             pagination_params

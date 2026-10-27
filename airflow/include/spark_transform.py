@@ -7,9 +7,14 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from airflow.include.transforms import transform_geojson_feature
-from airflow.include.quality import validate_records_batch
-from airflow.include.minio_client import get_s3_client, ensure_bucket, upload_json, list_objects
+try:
+    from include.transforms import transform_geojson_feature
+    from include.quality import validate_records_batch
+    from include.minio_client import get_s3_client, ensure_bucket, upload_json, list_objects
+except ImportError:
+    from airflow.include.transforms import transform_geojson_feature
+    from airflow.include.quality import validate_records_batch
+    from airflow.include.minio_client import get_s3_client, ensure_bucket, upload_json, list_objects
 
 logger = logging.getLogger(__name__)
 

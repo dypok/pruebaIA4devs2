@@ -8,14 +8,23 @@
 """
 
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 
-from airflow.include.usgs_client import fetch_usgs_realtime
-from airflow.include.minio_client import upload_json, ensure_bucket
-from airflow.include.alerts import on_failure_callback
+sys.path.insert(0, "/opt/airflow")
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+try:
+    from include.usgs_client import fetch_usgs_realtime
+    from include.minio_client import upload_json, ensure_bucket
+    from include.alerts import on_failure_callback
+except ImportError:
+    from airflow.include.usgs_client import fetch_usgs_realtime
+    from airflow.include.minio_client import upload_json, ensure_bucket
+    from airflow.include.alerts import on_failure_callback
 
 DEFAULT_BUCKET = os.getenv("MINIO_BUCKET_NAME", "sismowatch-lake")
 

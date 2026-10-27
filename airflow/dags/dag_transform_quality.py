@@ -10,14 +10,24 @@
 """
 
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
-from airflow.include.minio_client import download_json, list_objects
-from airflow.include.spark_transform import process_features_to_layers, write_parquet_to_minio
-from airflow.include.anomaly import detect_seismic_anomalies
-from airflow.include.alerts import notify_invalid_records, on_failure_callback
+sys.path.insert(0, "/opt/airflow")
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+try:
+    from include.minio_client import download_json, list_objects
+    from include.spark_transform import process_features_to_layers, write_parquet_to_minio
+    from include.anomaly import detect_seismic_anomalies
+    from include.alerts import notify_invalid_records, on_failure_callback
+except ImportError:
+    from airflow.include.minio_client import download_json, list_objects
+    from airflow.include.spark_transform import process_features_to_layers, write_parquet_to_minio
+    from airflow.include.anomaly import detect_seismic_anomalies
+    from airflow.include.alerts import notify_invalid_records, on_failure_callback
 
 DEFAULT_BUCKET = os.getenv("MINIO_BUCKET_NAME", "sismowatch-lake")
 

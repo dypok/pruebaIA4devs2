@@ -8,12 +8,20 @@
 """
 
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
-from airflow.include.ai_client import generate_executive_report
-from airflow.include.alerts import on_failure_callback
+sys.path.insert(0, "/opt/airflow")
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+try:
+    from include.ai_client import generate_executive_report
+    from include.alerts import on_failure_callback
+except ImportError:
+    from airflow.include.ai_client import generate_executive_report
+    from airflow.include.alerts import on_failure_callback
 
 PROMPT_PATH = os.path.join(os.path.dirname(__file__), "../include/prompts/daily_summary_v1.txt")
 

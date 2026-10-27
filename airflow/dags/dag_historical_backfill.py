@@ -7,15 +7,25 @@
 """
 
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from airflow import DAG
 from airflow.models.param import Param
 from airflow.operators.python import PythonOperator
 
-from airflow.include.usgs_client import fetch_usgs_query
-from airflow.include.minio_client import upload_json
-from airflow.include.spark_transform import process_features_to_layers, write_parquet_to_minio
-from airflow.include.alerts import on_failure_callback
+sys.path.insert(0, "/opt/airflow")
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+try:
+    from include.usgs_client import fetch_usgs_query
+    from include.minio_client import upload_json
+    from include.spark_transform import process_features_to_layers, write_parquet_to_minio
+    from include.alerts import on_failure_callback
+except ImportError:
+    from airflow.include.usgs_client import fetch_usgs_query
+    from airflow.include.minio_client import upload_json
+    from airflow.include.spark_transform import process_features_to_layers, write_parquet_to_minio
+    from airflow.include.alerts import on_failure_callback
 
 DEFAULT_BUCKET = os.getenv("MINIO_BUCKET_NAME", "sismowatch-lake")
 
