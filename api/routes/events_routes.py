@@ -55,8 +55,9 @@ def get_timeseries_stats(user: dict = Depends(require_viewer)):
 
 @router.get("/stats/regions", response_model=List[TopRegionItem])
 def get_top_regions_stats(
-    limit: int = Query(5, ge=1, le=20),
+    limit: int = Query(6, ge=1, le=20, description="Cantidad máxima de regiones"),
+    hours: Optional[int] = Query(None, ge=1, le=720, description="Ventana de tiempo en horas (opcional)"),
     user: dict = Depends(require_viewer),
 ):
     """Retorna las regiones con mayor concentración de actividad sísmica."""
-    return duckdb_service.get_top_regions(limit=limit)
+    return duckdb_service.get_top_regions(limit=limit, hours=hours)

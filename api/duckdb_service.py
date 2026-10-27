@@ -297,32 +297,72 @@ class DuckDBService:
                 for r in rows
             ]
 
-    def get_top_regions(self, limit: int = 5) -> List[Dict[str, Any]]:
-        """Retorna las regiones con mayor frecuencia sísmica."""
+    def get_top_regions(self, limit: int = 6, hours: Optional[int] = None) -> List[Dict[str, Any]]:
+        """
+        Retorna las regiones con mayor frecuencia sísmica con normalización geográfica exhaustiva.
+        Soporta filtrado por ventana de horas (ej. 24h) o catálogo completo.
+        """
         with self._lock:
-            rows = self.conn.execute("""
+            where_sql = "1=1"
+            params: List[Any] = []
+            if hours is not None:
+                max_time_row = self.conn.execute("SELECT MAX(time) FROM earthquake_events;").fetchone()
+                ref_time = max_time_row[0] if max_time_row and max_time_row[0] else datetime.now(timezone.utc)
+                where_sql = f"time >= TIMESTAMP '{ref_time}' - (CAST(? AS INTEGER) * INTERVAL '1 HOUR')"
+                params.append(hours)
+
+            rows = self.conn.execute(f"""
                 SELECT 
                     CASE 
-                        WHEN place LIKE '%CA%' THEN 'California, USA'
-                        WHEN place LIKE '%Chile%' THEN 'Chile'
-                        WHEN place LIKE '%Japan%' THEN 'Japan'
-                        WHEN place LIKE '%Alaska%' THEN 'Alaska, USA'
-                        WHEN place LIKE '%Peru%' THEN 'Peru'
-                        ELSE 'Otras Regiones'
+                        WHEN place LIKE '%, CA%' OR place LIKE '%, California%' THEN 'California, USA'
+                        WHEN place LIKE '%, Alaska%' THEN 'Alaska, USA'
+                        WHEN place LIKE '%, Hawaii%' THEN 'Hawaii, USA'
+                        WHEN place LIKE '%, Nevada%' THEN 'Nevada, USA'
+                        WHEN place LIKE '%, Washington%' THEN 'Washington, USA'
+                        WHEN place LIKE '%, Texas%' THEN 'Texas, USA'
+                        WHEN place LIKE '%, Utah%' THEN 'Utah, USA'
+                        WHEN place LIKE '%, Oklahoma%' THEN 'Oklahoma, USA'
+                        WHEN place LIKE '%, Puerto Rico%' THEN 'Puerto Rico'
+                        WHEN place LIKE '%, Mexico%' THEN 'Mexico'
+                        WHEN place LIKE '%, Chile%' THEN 'Chile'
+                        WHEN place LIKE '%, Japan%' THEN 'Japan'
+                        WHEN place LIKE '%, Indonesia%' THEN 'Indonesia'
+                        WHEN place LIKE '%, Philippines%' THEN 'Philippines'
+                        WHEN place LIKE '%, Vanuatu%' THEN 'Vanuatu'
+                        WHEN place LIKE '%, Panama%' THEN 'Panama'
+                        WHEN place LIKE '%, Peru%' THEN 'Peru'
+                        WHEN place LIKE '%, Tonga%' THEN 'Tonga'
+                        WHEN place LIKE '%, Fiji%' THEN 'Fiji'
+                        WHEN place LIKE '%, New Zealand%' THEN 'New Zealand'
+                        WHEN place LIKE '%, Italy%' THEN 'Italy'
+                        WHEN place LIKE '%, Greece%' THEN 'Greece'
+                        WHEN place LIKE '%, Turkey%' THEN 'Turkey'
+                        WHEN place LIKE '%, Iceland%' THEN 'Iceland'
+                        WHEN place LIKE '%, Russia%' THEN 'Russia'
+                        WHEN place LIKE '%, China%' THEN 'China'
+                        WHEN place LIKE '%, Canada%' THEN 'Canada'
+                        WHEN place LIKE '%, Colombia%' THEN 'Colombia'
+                        WHEN place LIKE '%, Ecuador%' THEN 'Ecuador'
+                        WHEN place LIKE '%Ridge%' THEN 'Oceanic Ridge'
+                        WHEN place LIKE '%,%' THEN trim(split_part(place, ',', -1))
+                        ELSE 'Other'
                     END as region,
                     COUNT(*) as count,
-                    COALESCE(ROUND(AVG(mag), 2), 0.0) as avg_mag
+                    COALESCE(ROUND(AVG(mag), 2), 0.0) as avg_mag,
+                    COALESCE(MAX(mag), 0.0) as max_mag
                 FROM earthquake_events
+                WHERE {where_sql}
                 GROUP BY region
                 ORDER BY count DESC
                 LIMIT ?;
-            """, [limit]).fetchall()
+            """, params + [limit]).fetchall()
 
             return [
                 {
                     "region": str(r[0]),
                     "count": int(r[1]),
                     "avg_mag": float(r[2]) if r[2] is not None else 0.0,
+                    "max_mag": float(r[3]) if r[3] is not None else 0.0,
                 }
                 for r in rows
             ]

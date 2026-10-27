@@ -58,8 +58,10 @@ export async function fetchTimeseries(): Promise<TimeseriesPoint[]> {
   return resp.json();
 }
 
-export async function fetchTopRegions(): Promise<TopRegionItem[]> {
-  const resp = await fetch(`${API_BASE}/api/stats/regions`, { headers: getAuthHeaders() });
+export async function fetchTopRegions(hours?: number, limit: number = 6): Promise<TopRegionItem[]> {
+  const query = new URLSearchParams({ limit: limit.toString() });
+  if (hours !== undefined) query.append('hours', hours.toString());
+  const resp = await fetch(`${API_BASE}/api/stats/regions?${query.toString()}`, { headers: getAuthHeaders() });
   if (!resp.ok) throw new Error('Error obteniendo regiones');
   return resp.json();
 }

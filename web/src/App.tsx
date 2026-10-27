@@ -86,7 +86,7 @@ export const AppContent: React.FC = () => {
         fetchEvents({ page, page_size: pageSize, min_magnitude: minMagnitude, region: searchQuery }),
         fetchMapEvents(24, 500),
         fetchTimeseries(),
-        fetchTopRegions(),
+        fetchTopRegions(24),
         fetchReports(),
       ]);
 
@@ -240,6 +240,10 @@ export const AppContent: React.FC = () => {
             <SeismicCharts
               timeseries={timeseries}
               topRegions={topRegions}
+              onSelectRegion={(region) => {
+                setSearchQuery(region);
+                setPage(1);
+              }}
             />
 
             {/* Tabla de Eventos Paginada con Filtros */}

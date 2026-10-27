@@ -57,6 +57,7 @@ class TopRegionItem(BaseModel):
     region: str
     count: int
     avg_mag: float
+    max_mag: Optional[float] = None
 
 
 class ChartSuggestion(BaseModel):

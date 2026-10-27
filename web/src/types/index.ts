@@ -32,6 +32,7 @@ export interface TopRegionItem {
   region: string;
   count: number;
   avg_mag: number;
+  max_mag?: number;
 }
 
 export interface ChartSuggestion {
