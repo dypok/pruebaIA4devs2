@@ -52,12 +52,14 @@ export const ChatbotDrawer: React.FC<ChatbotDrawerProps> = ({
   const [loading, setLoading] = useState(false);
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
   const [expandedSql, setExpandedSql] = useState<Record<string, boolean>>({});
-  const [messages, setMessages] = useState<Message[]>([
+  const [messages, setMessages] = useState<Message[]>(() => [
     {
       id: 'welcome',
       sender: 'bot',
       intent: 'conversational',
-      text: '¡Hola! 👋 Soy el asistente inteligente de **SismoWatch** impulsado por IA local (Qwen 2.5:2b).\n\nPuedes hacerme preguntas cuantitativas sobre sismos (consultas DuckDB y gráficos interactivos), conceptos científicos de geofísica o protocolos de seguridad y prevención ante emergencias.',
+      text: isAdmin
+        ? '¡Hola! 👋 Soy el asistente analítico de **SismoWatch** impulsado por IA local (Qwen 2.5:2b).\n\nPuedes hacerme preguntas cuantitativas sobre sismos (consultas DuckDB y gráficos interactivos), conceptos científicos de geofísica o telemetría del sistema.'
+        : '¡Hola! 👋 Soy el asistente virtual de **SismoWatch** impulsado por IA.\n\nPuedes hacerme preguntas en lenguaje natural sobre sismos recientes, zonas activas, magnitudes, gráficos interactivos o protocolos de prevención y seguridad.',
       timestamp: new Date().toLocaleTimeString(),
     },
   ]);
@@ -141,7 +143,7 @@ export const ChatbotDrawer: React.FC<ChatbotDrawerProps> = ({
   };
 
   const handlePin = (msg: Message) => {
-    if (!msg.chart || !msg.data || !msg.sql) return;
+    if (!msg.chart || !msg.data) return;
 
     const pinned: PinnedChart = {
       id: `pinned-${Date.now()}`,
@@ -149,7 +151,7 @@ export const ChatbotDrawer: React.FC<ChatbotDrawerProps> = ({
       type: msg.chart.type,
       x_key: msg.chart.x_key,
       y_key: msg.chart.y_key,
-      sql: msg.sql,
+      sql: msg.sql || '',
       data: msg.data,
       pinnedAt: new Date().toISOString(),
     };
@@ -274,8 +276,8 @@ export const ChatbotDrawer: React.FC<ChatbotDrawerProps> = ({
                 </div>
               )}
 
-              {/* Consulta SQL generada (colapsable con toggle) */}
-              {m.sql && (
+              {/* Consulta SQL generada (colapsable con toggle) - Exclusivo para ADMIN */}
+              {isAdmin && m.sql && (
                 <div className="mt-2.5 pt-2 border-t border-slate-700/60">
                   <button
                     onClick={() => toggleSql(m.id)}

@@ -12,6 +12,7 @@ import {
 } from 'recharts';
 import { PinOff, RefreshCw, Sparkles } from 'lucide-react';
 import { PinnedChart } from '../types';
+import { useAuth } from '../context/AuthContext';
 
 interface PinnedChartsGridProps {
   pinnedCharts: PinnedChart[];
@@ -24,6 +25,8 @@ export const PinnedChartsGrid: React.FC<PinnedChartsGridProps> = ({
   onUnpin,
   onRefreshAll,
 }) => {
+  const { isAdmin } = useAuth();
+
   if (pinnedCharts.length === 0) {
     return null;
   }
@@ -60,9 +63,11 @@ export const PinnedChartsGrid: React.FC<PinnedChartsGridProps> = ({
             <div className="flex items-start justify-between mb-3">
               <div>
                 <h4 className="text-sm font-semibold text-slate-200">{chart.title}</h4>
-                <p className="text-[10px] font-mono text-slate-400 mt-0.5 truncate max-w-sm" title={chart.sql}>
-                  SQL: {chart.sql}
-                </p>
+                {isAdmin && chart.sql && (
+                  <p className="text-[10px] font-mono text-slate-400 mt-0.5 truncate max-w-sm" title={chart.sql}>
+                    SQL: {chart.sql}
+                  </p>
+                )}
               </div>
               <button
                 onClick={() => onUnpin(chart.id)}

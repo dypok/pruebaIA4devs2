@@ -94,4 +94,11 @@ def chat_with_data_agent(
         raise HTTPException(status_code=400, detail="El mensaje no puede estar vacío.")
 
     result = cognitive_agent.process_message(clean_prompt)
+
+    # Restricción RBAC: En la vista de cliente (viewer), se ocultan consultas SQL internas y auditoría técnica
+    user_role = user.get("role", "viewer") if isinstance(user, dict) else getattr(user, "role", "viewer")
+    if user_role != "admin":
+        result["sql"] = None
+        result["catalog"] = None
+
     return ChatResponse(**result)
