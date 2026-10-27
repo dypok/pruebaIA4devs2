@@ -131,7 +131,7 @@ export const PipelineStatus: React.FC = () => {
       </div>
 
       {/* Panel Inferior: Explorador de Registros con Fallos de Calidad (Solo Admin) */}
-      {isAdmin && (
+      {isAdmin ? (
         <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-5">
           <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-3">
             <div className="flex items-center space-x-2">
@@ -173,6 +173,20 @@ export const PipelineStatus: React.FC = () => {
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-slate-900/40 border border-amber-500/30 rounded-lg p-5">
+          <div className="flex items-start space-x-3">
+            <Lock className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+            <div>
+              <h4 className="text-sm font-semibold text-slate-200">
+                Auditoría de Calidad y Cuarentena Restringida (Rol Viewer)
+              </h4>
+              <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                Estás visualizando la plataforma con rol <b>Viewer (Solo Lectura)</b>. El acceso a los registros en estado INVALID interceptados por el motor de calidad Pandera y las acciones de mutación de Airflow requieren rol <b>Admin</b> (política RBAC HTTP 403 Forbidden).
+              </p>
+            </div>
           </div>
         </div>
       )}

@@ -8,7 +8,7 @@ import { EventsTable } from './components/EventsTable';
 import { ReportsViewer } from './components/ReportsViewer';
 import { PipelineStatus } from './components/PipelineStatus';
 import { ChatbotDrawer } from './components/ChatbotDrawer';
-import { LoginModal } from './components/LoginModal';
+import { LoginPage } from './components/LoginPage';
 import { useAuth } from './context/AuthContext';
 import {
   KpiData,
@@ -26,6 +26,11 @@ import {
 
 export const AppContent: React.FC = () => {
   const { isAuthenticated } = useAuth();
+
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
+
   const [activeTab, setActiveTab] = useState<'dashboard' | 'reports' | 'pipeline'>('dashboard');
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isLoginOpen, setIsLoginOpen] = useState(false);
@@ -91,14 +96,18 @@ export const AppContent: React.FC = () => {
   };
 
   useEffect(() => {
-    loadInitialData();
-  }, [page, minMagnitude, searchQuery]);
+    if (isAuthenticated) {
+      loadInitialData();
+    }
+  }, [isAuthenticated, page, minMagnitude, searchQuery]);
 
   // Conexión Server-Sent Events (SSE) para tiempo real
   useEffect(() => {
+    if (!isAuthenticated) return;
     const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
     const token = localStorage.getItem('sismowatch_token');
-    const sseUrl = token ? `${API_BASE}/api/stream?token=${encodeURIComponent(token)}` : `${API_BASE}/api/stream`;
+    if (!token) return;
+    const sseUrl = `${API_BASE}/api/stream?token=${encodeURIComponent(token)}`;
 
     let eventSource: EventSource | null = null;
     try {
@@ -136,7 +145,7 @@ export const AppContent: React.FC = () => {
     return () => {
       if (eventSource) eventSource.close();
     };
-  }, []);
+  }, [isAuthenticated]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
@@ -220,12 +229,6 @@ export const AppContent: React.FC = () => {
         isOpen={isChatOpen}
         onClose={() => setIsChatOpen(false)}
         onPinChart={handlePinChart}
-      />
-
-      {/* Modal de Autenticación */}
-      <LoginModal
-        isOpen={isLoginOpen}
-        onClose={() => setIsLoginOpen(false)}
       />
     </div>
   );

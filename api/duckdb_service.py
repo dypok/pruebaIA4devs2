@@ -29,8 +29,18 @@ class DuckDBService:
         """Inicializa esquemas y vistas sobre Parquet / datos iniciales."""
         try:
             self.conn.execute("INSTALL httpfs; LOAD httpfs;")
+            endpoint = os.getenv("MINIO_ENDPOINT", "http://minio:9000").replace("http://", "").replace("https://", "")
+            user = os.getenv("AWS_ACCESS_KEY_ID", "minioadmin")
+            pwd = os.getenv("AWS_SECRET_ACCESS_KEY", "minioadmin2026!")
+            self.conn.execute(f"""
+                SET s3_endpoint = '{endpoint}';
+                SET s3_access_key_id = '{user}';
+                SET s3_secret_access_key = '{pwd}';
+                SET s3_use_ssl = false;
+                SET s3_url_style = 'path';
+            """)
         except Exception as e:
-            logger.warning(f"Extensión httpfs no disponible o ya cargada: {e}")
+            logger.warning(f"Configuración S3 para DuckDB falló o ya inicializada: {e}")
 
         # Crear tabla en memoria con estructura base
         self.conn.execute("""
@@ -67,7 +77,28 @@ class DuckDBService:
             CREATE OR REPLACE VIEW earthquake_events AS 
             SELECT * FROM events_memory WHERE processing_status = 'VALID';
         """)
+
+        # Cargar datos desde MinIO Gold Parquet
+        self.refresh_from_s3()
         logger.info("DuckDB inicializado con vista analítica 'earthquake_events'.")
+
+    def refresh_from_s3(self):
+        """Carga o actualiza eventos validados desde la capa Gold en MinIO."""
+        try:
+            self.conn.execute("""
+                INSERT OR REPLACE INTO events_memory
+                SELECT DISTINCT ON (id)
+                    id, mag, place, time::TIMESTAMP,
+                    longitude, latitude, depth_km,
+                    tsunami::INTEGER, sig::INTEGER,
+                    status, mag_type, processing_status
+                FROM read_parquet('s3://sismowatch-lake/gold/**/*.parquet')
+                WHERE processing_status = 'VALID';
+            """)
+            count = self.conn.execute("SELECT count(*) FROM events_memory;").fetchone()[0]
+            logger.info(f"DuckDB sincronizado con MinIO Gold Parquet. Total eventos en memoria: {count}")
+        except Exception as e:
+            logger.debug(f"Aviso de sincronización S3 MinIO en DuckDB: {e}")
 
     def insert_events_batch(self, events: List[Dict[str, Any]]):
         """Inserta o actualiza un lote de eventos en la tabla DuckDB."""
@@ -88,6 +119,7 @@ class DuckDBService:
 
     def get_kpis(self) -> Dict[str, Any]:
         """Calcula los 6 KPIs principales en las últimas 24 horas."""
+        self.refresh_from_s3()
         res = self.conn.execute("""
             SELECT 
                 COUNT(*) as total_events,
@@ -123,6 +155,7 @@ class DuckDBService:
         end_date: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Consulta paginada de sismos con filtros de magnitud, región y fecha."""
+        self.refresh_from_s3()
         where_clauses = ["1=1"]
         params = []
 
@@ -238,6 +271,7 @@ class DuckDBService:
         Ejecuta una consulta SQL de solo lectura validada sobre DuckDB.
         Garantiza protección contra inyecciones SQL DDL/DML.
         """
+        self.refresh_from_s3()
         # 1. Validación de seguridad
         clean_sql = sql_query.strip().rstrip(";")
         if not clean_sql.upper().startswith("SELECT"):

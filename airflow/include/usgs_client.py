@@ -100,3 +100,13 @@ def fetch_usgs_query(
 
     logger.error("No se pudo completar la consulta histórica de USGS tras reintentos.")
     return None
+
+
+def fetch_usgs_month_feed(max_retries: int = 3) -> Optional[Dict[str, Any]]:
+    """
+    Obtiene el feed histórico oficial de los últimos 30 días de USGS (~10,000 sismos
+    con todas las magnitudes y metadatos completos).
+    """
+    url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_month.geojson"
+    return fetch_usgs_realtime(url=url, max_retries=max_retries)
+

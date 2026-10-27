@@ -118,7 +118,8 @@ def chat_with_data_agent(
     Agente conversacional Text-to-SQL con Qwen 2.5:2b y generación automática de gráficos.
     Traduce la pregunta en lenguaje natural a DuckDB SQL, ejecuta sobre Parquets y entrega respuesta.
     """
-    clean_prompt = request.prompt.strip()
+    raw_prompt = request.prompt or request.query or ""
+    clean_prompt = raw_prompt.strip()
     if not clean_prompt:
         raise HTTPException(status_code=400, detail="El mensaje no puede estar vacío.")
 

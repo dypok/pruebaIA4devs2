@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, Shield, Bot, LogOut, Radio } from 'lucide-react';
+import { Activity, Shield, Bot, LogOut, Lock, RefreshCw } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 interface NavbarProps {
@@ -17,7 +17,19 @@ export const Navbar: React.FC<NavbarProps> = ({
   setIsChatOpen,
   isLive,
 }) => {
-  const { user, logout } = useAuth();
+  const { user, logout, login, isAdmin } = useAuth();
+
+  const handleQuickSwitch = async () => {
+    try {
+      if (isAdmin) {
+        await login('viewer', 'ViewerSismoWatch2026!');
+      } else {
+        await login('admin', 'AdminSismoWatch2026!');
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   return (
     <header className="border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-40">
@@ -59,13 +71,14 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
             <button
               onClick={() => setActiveTab('pipeline')}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center space-x-1.5 ${
                 activeTab === 'pipeline'
                   ? 'text-sky-400 bg-sky-500/10 border border-sky-500/20'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
               }`}
             >
-              Pipeline & Gobernanza
+              <span>Pipeline & Gobernanza</span>
+              {!isAdmin && <Lock className="w-3 h-3 text-amber-400" />}
             </button>
           </nav>
         </div>
@@ -88,16 +101,38 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="hidden sm:inline">SismoWatch AI</span>
           </button>
 
-          {/* Perfil de Usuario */}
+          {/* Perfil de Usuario y Manejo de Roles */}
           <div className="flex items-center space-x-3 pl-2 border-l border-slate-800">
             <div className="text-right hidden sm:block">
-              <div className="text-xs font-medium text-slate-200">{user?.username || 'Usuario'}</div>
-              <div className="text-[10px] font-mono text-slate-400 capitalize">{user?.role}</div>
+              <div className="text-xs font-semibold text-slate-200 flex items-center justify-end space-x-1.5">
+                <span>{user?.username}</span>
+                <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${
+                  isAdmin 
+                    ? 'bg-sky-500/20 text-sky-400 border border-sky-500/30' 
+                    : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                }`}>
+                  {user?.role}
+                </span>
+              </div>
+              <div className="text-[10px] font-mono text-slate-400">
+                {isAdmin ? 'Acceso Total' : 'Solo Lectura'}
+              </div>
             </div>
+
+            {/* Botón rápido para conmutar rol (ideal para demostración) */}
+            <button
+              onClick={handleQuickSwitch}
+              className="hidden lg:flex items-center space-x-1 px-2 py-1 text-[11px] font-mono rounded bg-slate-800/80 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
+              title={`Cambiar rápidamente a rol ${isAdmin ? 'Viewer' : 'Admin'}`}
+            >
+              <RefreshCw className="w-3 h-3 text-sky-400" />
+              <span>{isAdmin ? 'Ver como Viewer' : 'Ver como Admin'}</span>
+            </button>
+
             <button
               onClick={logout}
               className="p-1.5 text-slate-400 hover:text-rose-400 rounded-md hover:bg-slate-800 transition-colors"
-              title="Cerrar Sesión"
+              title="Cerrar Sesión (Volver al Login)"
             >
               <LogOut className="w-4 h-4" />
             </button>

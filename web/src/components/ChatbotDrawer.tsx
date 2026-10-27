@@ -87,7 +87,9 @@ export const ChatbotDrawer: React.FC<ChatbotDrawerProps> = ({
       const errorMsg: Message = {
         id: (Date.now() + 1).toString(),
         sender: 'bot',
-        text: 'Ocurrió un error al procesar tu consulta. Inténtalo nuevamente o prueba con otra pregunta.',
+        text: err?.message?.includes('Token') || err?.message?.includes('Autenticación')
+          ? 'Tu sesión ha expirado o requiere autenticación. Por favor inicia sesión nuevamente.'
+          : 'Ocurrió un error al procesar tu consulta. Inténtalo nuevamente o prueba con otra pregunta.',
         timestamp: new Date().toLocaleTimeString(),
       };
       setMessages((prev) => [...prev, errorMsg]);

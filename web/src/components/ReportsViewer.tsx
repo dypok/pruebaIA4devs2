@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
-import { FileText, CheckCircle2, Download, Calendar, Sparkles } from 'lucide-react';
+import { FileText, CheckCircle2, Download, Calendar, Sparkles, RefreshCw, Lock } from 'lucide-react';
 import { AiReport } from '../types';
+import { useAuth } from '../context/AuthContext';
+import { triggerAiRegenerateApi } from '../services/api';
 
 interface ReportsViewerProps {
   reports: AiReport[];
@@ -8,7 +10,23 @@ interface ReportsViewerProps {
 }
 
 export const ReportsViewer: React.FC<ReportsViewerProps> = ({ reports, loading }) => {
+  const { isAdmin } = useAuth();
   const [selectedReport, setSelectedReport] = useState<AiReport | null>(reports[0] || null);
+  const [regenerating, setRegenerating] = useState(false);
+  const [regenMsg, setRegenMsg] = useState<string | null>(null);
+
+  const handleRegenerate = async () => {
+    setRegenerating(true);
+    setRegenMsg(null);
+    try {
+      const res = await triggerAiRegenerateApi();
+      setRegenMsg(res.message || 'Regeneración iniciada.');
+    } catch (e: any) {
+      setRegenMsg(e.message || 'Error al regenerar');
+    } finally {
+      setRegenerating(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -75,17 +93,43 @@ export const ReportsViewer: React.FC<ReportsViewerProps> = ({ reports, loading }
                 </div>
               </div>
 
-              {/* Botón Descargar */}
-              <a
-                href={`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}/api/reports/export?format=html`}
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center space-x-1.5 px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium rounded transition-colors"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Descargar HTML/PDF</span>
-              </a>
+              {/* Botones de Acción */}
+              <div className="flex items-center space-x-2">
+                {isAdmin ? (
+                  <button
+                    onClick={handleRegenerate}
+                    disabled={regenerating}
+                    className="flex items-center space-x-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium rounded transition-colors"
+                    title="Disparar regeneración con Qwen 2.5:2b (Admin)"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 text-sky-400 ${regenerating ? 'animate-spin' : ''}`} />
+                    <span>{regenerating ? 'Regenerando...' : 'Regenerar con IA'}</span>
+                  </button>
+                ) : (
+                  <span className="flex items-center space-x-1 text-[11px] font-mono text-slate-500 bg-slate-950/40 px-2 py-1 rounded border border-slate-800" title="Regeneración restringida a Administrador">
+                    <Lock className="w-3 h-3 text-slate-500" />
+                    <span>Regeneración (Solo Admin)</span>
+                  </span>
+                )}
+
+                <a
+                  href={`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}/api/reports/export?format=html`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center space-x-1.5 px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium rounded transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Descargar HTML/PDF</span>
+                </a>
+              </div>
             </div>
+
+            {regenMsg && (
+              <div className="p-3 bg-sky-500/10 border border-sky-500/20 text-sky-400 text-xs font-mono rounded flex justify-between items-center">
+                <span>{regenMsg}</span>
+                <button onClick={() => setRegenMsg(null)} className="text-slate-400 hover:text-white">&times;</button>
+              </div>
+            )}
 
             {/* Narrativa Ejecutiva */}
             <div>

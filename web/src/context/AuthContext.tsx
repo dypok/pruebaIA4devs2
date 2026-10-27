@@ -18,38 +18,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const savedUser = localStorage.getItem('sismowatch_user');
     const savedRole = localStorage.getItem('sismowatch_role') as 'viewer' | 'admin' | null;
 
-    if (savedToken && savedUser && savedRole) {
+    if (savedToken && savedToken.split('.').length === 3 && savedUser && savedRole) {
       return { username: savedUser, role: savedRole, token: savedToken };
     }
-    // Sesión por defecto inicial como admin para desarrollo
-    return { username: 'admin', role: 'admin', token: 'mock-initial-token' };
+    return null;
   });
 
   const login = async (username: string, pass: string) => {
-    try {
-      const data = await loginApi(username, pass);
-      const session: UserSession = {
-        username: data.username,
-        role: data.role,
-        token: data.access_token,
-      };
-      localStorage.setItem('sismowatch_token', data.access_token);
-      localStorage.setItem('sismowatch_user', data.username);
-      localStorage.setItem('sismowatch_role', data.role);
-      setUser(session);
-    } catch (err: any) {
-      // Si el backend aún no está levantado en dev, permitir mock local
-      if (pass.includes('2026') || pass === 'admin' || pass === 'viewer') {
-        const role = username === 'admin' ? 'admin' : 'viewer';
-        const session: UserSession = { username, role, token: 'local-dev-token' };
-        localStorage.setItem('sismowatch_token', 'local-dev-token');
-        localStorage.setItem('sismowatch_user', username);
-        localStorage.setItem('sismowatch_role', role);
-        setUser(session);
-      } else {
-        throw err;
-      }
-    }
+    const data = await loginApi(username, pass);
+    const session: UserSession = {
+      username: data.username,
+      role: data.role,
+      token: data.access_token,
+    };
+    localStorage.setItem('sismowatch_token', data.access_token);
+    localStorage.setItem('sismowatch_user', data.username);
+    localStorage.setItem('sismowatch_role', data.role);
+    setUser(session);
   };
 
   const logout = () => {

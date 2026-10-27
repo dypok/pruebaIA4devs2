@@ -17,12 +17,12 @@ sys.path.insert(0, "/opt/airflow")
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 try:
-    from include.usgs_client import fetch_usgs_query
+    from include.usgs_client import fetch_usgs_query, fetch_usgs_month_feed
     from include.minio_client import upload_json
     from include.polars_transform import process_features_to_layers, write_parquet_to_minio
     from include.alerts import on_failure_callback
 except ImportError:
-    from airflow.include.usgs_client import fetch_usgs_query
+    from airflow.include.usgs_client import fetch_usgs_query, fetch_usgs_month_feed
     from airflow.include.minio_client import upload_json
     from airflow.include.polars_transform import process_features_to_layers, write_parquet_to_minio
     from airflow.include.alerts import on_failure_callback
@@ -43,22 +43,28 @@ default_args = {
 def run_historical_backfill(**context):
     """
     Ejecuta la ingesta y transformación histórica con parámetros de ejecución.
+    Si no se especifican fechas, descarga el feed oficial mensual completo (~10,000 sismos).
     """
     params = context.get("params", {})
     now = datetime.now(timezone.utc)
     
-    # Valores por defecto: últimos 30 días
-    default_start = (now - timedelta(days=30)).strftime("%Y-%m-%d")
-    default_end = now.strftime("%Y-%m-%d")
-
-    start_date = params.get("start_date") or default_start
-    end_date = params.get("end_date") or default_end
+    start_date = (params.get("start_date") or "").strip()
+    end_date = (params.get("end_date") or "").strip()
     min_mag = float(params.get("min_magnitude") or 2.5)
 
-    print(f"🚀 Iniciando Backfill Histórico: {start_date} a {end_date} (minMag={min_mag})")
+    if not start_date and not end_date:
+        start_date = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+        end_date = now.strftime("%Y-%m-%d")
+        print(f"🚀 Iniciando Backfill Mensual Completo (all_month.geojson de USGS)...")
+        payload = fetch_usgs_month_feed()
+    else:
+        if not start_date:
+            start_date = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+        if not end_date:
+            end_date = now.strftime("%Y-%m-%d")
+        print(f"🚀 Iniciando Backfill Parametrizado: {start_date} a {end_date} (minMag={min_mag})...")
+        payload = fetch_usgs_query(start_time=start_date, end_time=end_date, min_magnitude=min_mag)
 
-    # 1. Consulta a API histórica de USGS
-    payload = fetch_usgs_query(start_time=start_date, end_time=end_date, min_magnitude=min_mag)
     if not payload:
         print("⚠️ Advertencia: No se obtuvieron datos históricos de USGS.")
         return
@@ -71,9 +77,13 @@ def run_historical_backfill(**context):
     upload_json(DEFAULT_BUCKET, bronze_key, payload)
 
     # 3. Transformación y validación de calidad con Polars
-    valid, invalid, score, _ = process_features_to_layers(features)
+    valid, invalid, score, summary = process_features_to_layers(features)
+    all_records = valid + invalid
     
-    # 4. Escritura en Capa Gold Parquet
+    # 4. Escritura en Capas Silver y Gold Parquet
+    silver_key = f"silver/earthquake_events/backfill/backfill_{start_date}_to_{end_date}.snappy.parquet"
+    write_parquet_to_minio(all_records, silver_key, DEFAULT_BUCKET)
+
     if valid:
         gold_key = f"gold/earthquake_events/backfill/backfill_{start_date}_to_{end_date}.snappy.parquet"
         write_parquet_to_minio(valid, gold_key, DEFAULT_BUCKET)
