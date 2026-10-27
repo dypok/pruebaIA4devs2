@@ -158,11 +158,12 @@ class CognitiveAgent:
             "}\n"
             "Reglas estrictas:\n"
             "1. Toda la respuesta DEBE estar 100% en ESPAÑOL. Está TERMINANTEMENTE PROHIBIDO responder en chino ni usar caracteres asiáticos.\n"
-            "2. Preguntas sobre dónde, cuándo o cuál fue el último/más reciente sismo o temblor son SIEMPRE intent=\"ANALYTICS\" y subtype=\"latest_event\".\n"
+            "2. Preguntas sobre dónde, cuándo o cuál fue el último/más reciente sismo o temblor son SIEMPRE intent=\"ANALYTICS\", subtype=\"latest_event\" y time_frame=\"latest\".\n"
             "3. Preguntas sobre los sismos más fuertes o de mayor magnitud son intent=\"ANALYTICS\" y subtype=\"strongest_events\".\n"
-            "4. Preguntas sobre sismos en una región/país (ej. Chile, California) son intent=\"ANALYTICS\" y subtype=\"regional_activity\".\n"
-            "5. Preguntas conceptuales teóricas (qué es la falla de San Andrés, qué es la escala Richter) son intent=\"KNOWLEDGE\".\n"
-            "6. Saludos o preguntas de cortesía son intent=\"CONVERSATIONAL\".\n"
+            "4. Si la pregunta menciona '24h', '24 horas', 'últimas 24', 'hoy', 'en el día', DEBES asignar obligatoriamente time_frame=\"24h\".\n"
+            "5. Preguntas sobre sismos en una región/país (ej. Chile, California, México) son intent=\"ANALYTICS\" y subtype=\"regional_activity\".\n"
+            "6. Preguntas conceptuales teóricas (qué es la falla de San Andrés, qué es la escala Richter) son intent=\"KNOWLEDGE\".\n"
+            "7. Saludos o preguntas de cortesía son intent=\"CONVERSATIONAL\".\n"
             "Devuelve EXCLUSIVAMENTE el objeto JSON sin markdown ni texto adicional."
         )
 
@@ -203,6 +204,19 @@ class CognitiveAgent:
             time_fr = catalog_data.get("time_frame")
             if time_fr and time_fr.lower() == "null":
                 time_fr = None
+
+            # Normalización y salvaguarda de entidades y ventana temporal
+            p_clean = _normalize_text(clean_prompt)
+            if any(w in p_clean for w in ["24h", "24 h", "24 horas", "ultimas 24", "hoy", "el dia de hoy", "del dia", "en el dia"]):
+                time_fr = "24h"
+            elif any(w in p_clean for w in ["ultimo", "mas reciente", "acaba de ocurrir"]):
+                if not time_fr:
+                    time_fr = "latest"
+
+            if any(w in p_clean for w in ["fuerte", "mayor magnitud", "mas potente", "maxima magnitud"]):
+                subtype_norm = "strongest_events"
+                intent_norm = "analytics"
+
             reasoning_str = catalog_data.get("reasoning", "Clasificado por Qwen 2.5:2b")
             clean_reasoning = self._sanitize_reasoning(reasoning_str, subtype_norm, target_loc)
 
@@ -242,6 +256,15 @@ class CognitiveAgent:
     def _heuristic_fallback_catalog(self, prompt: str, latency_ms: float) -> IntentCatalogMetadata:
         """Catalogador heurístico resiliente de respaldo para garantizar cero fallos de red."""
         p = _normalize_text(prompt)
+
+        # Detectar ventana temporal
+        time_frame = None
+        if any(w in p for w in ["24h", "24 h", "24 horas", "ultimas 24", "hoy", "el dia de hoy", "del dia", "en el dia"]):
+            time_frame = "24h"
+        elif any(w in p for w in ["ultimo", "mas reciente", "acaba de ocurrir"]):
+            time_frame = "latest"
+        elif any(w in p for w in ["historico", "todos los tiempos", "mes"]):
+            time_frame = "historical"
 
         # Conversacional
         if any(w in p for w in ["hola", "buenas", "buen dia", "hey", "saludos"]):
@@ -284,11 +307,24 @@ class CognitiveAgent:
 
         # Más fuertes
         if any(w in p for w in ["fuerte", "mayor magnitud", "mas potente", "maxima magnitud"]):
+            reasoning = "Ranking de sismos en las últimas 24h" if time_frame == "24h" else "Ranking de sismos por energía liberada"
             return IntentCatalogMetadata(
                 intent="analytics",
                 subtype="strongest_events",
+                time_frame=time_frame,
                 confidence=0.98,
-                reasoning="Ranking de sismos por energía liberada",
+                reasoning=reasoning,
+                step1_latency_ms=latency_ms
+            )
+
+        # Alertas de tsunami
+        if any(w in p for w in ["tsunami", "alerta de tsunami", "olas gigantes"]):
+            return IntentCatalogMetadata(
+                intent="analytics",
+                subtype="tsunami_alerts",
+                time_frame=time_frame,
+                confidence=0.98,
+                reasoning="Verificación de alertas de tsunami",
                 step1_latency_ms=latency_ms
             )
 
@@ -304,7 +340,7 @@ class CognitiveAgent:
 
         # Búsqueda geográfica
         matched_loc = None
-        for loc in ["chile", "japon", "california", "alaska", "hawaii", "mexico", "peru", "panama", "nevada"]:
+        for loc in ["chile", "japon", "california", "alaska", "hawaii", "mexico", "peru", "panama", "nevada", "vanuatu"]:
             if loc in p:
                 matched_loc = loc.title()
                 break
@@ -313,6 +349,7 @@ class CognitiveAgent:
                 intent="analytics",
                 subtype="regional_activity",
                 target_location=matched_loc,
+                time_frame=time_frame,
                 confidence=0.95,
                 reasoning=f"Filtro territorial para {matched_loc}",
                 step1_latency_ms=latency_ms
@@ -322,6 +359,7 @@ class CognitiveAgent:
         return IntentCatalogMetadata(
             intent="analytics",
             subtype="latest_event",
+            time_frame=time_frame,
             confidence=0.90,
             reasoning="Consulta de datos cuantitativos sobre DuckDB",
             step1_latency_ms=latency_ms
@@ -470,21 +508,61 @@ class CognitiveAgent:
     def _handle_analytics_guided(self, catalog: IntentCatalogMetadata, raw_prompt: str) -> Dict[str, Any]:
         """
         Ejecuta la analítica en DuckDB guiada con precisión por el subtipo catalogado en la Fase 1.
+        Soporta filtrado temporal por ventana de 24 horas y filtrado geográfico compuesto.
         """
         subtype = catalog.subtype
+        p_norm = _normalize_text(raw_prompt)
+
+        # Evaluar ventana de 24 horas tanto desde catalog como desde raw_prompt
+        is_24h = catalog.time_frame == "24h" or any(w in p_norm for w in ["24h", "24 h", "24 horas", "ultimas 24", "hoy", "el dia de hoy", "del dia", "en el dia"])
+        time_clause_24h = "time >= (SELECT MAX(time) FROM earthquake_events) - INTERVAL '24 HOUR'"
+
         sql_to_execute = None
 
         if subtype == "latest_event":
-            sql_to_execute = "SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events ORDER BY time DESC LIMIT 1"
+            if catalog.target_location:
+                loc = catalog.target_location.lower()
+                sql_to_execute = f"SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events WHERE LOWER(place) LIKE '%{loc}%' ORDER BY time DESC LIMIT 1"
+            else:
+                sql_to_execute = "SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events ORDER BY time DESC LIMIT 1"
+
         elif subtype == "strongest_events":
-            sql_to_execute = "SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events ORDER BY mag DESC LIMIT 5"
+            where_parts = []
+            if is_24h:
+                where_parts.append(time_clause_24h)
+            if catalog.target_location:
+                loc = catalog.target_location.lower()
+                where_parts.append(f"LOWER(place) LIKE '%{loc}%'")
+
+            where_sql = f"WHERE {' AND '.join(where_parts)} " if where_parts else ""
+            sql_to_execute = f"SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events {where_sql}ORDER BY mag DESC LIMIT 5"
+
         elif subtype == "tsunami_alerts":
-            sql_to_execute = "SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events WHERE tsunami = 1 ORDER BY time DESC LIMIT 5"
+            where_parts = ["tsunami = 1"]
+            if is_24h:
+                where_parts.append(time_clause_24h)
+            if catalog.target_location:
+                loc = catalog.target_location.lower()
+                where_parts.append(f"LOWER(place) LIKE '%{loc}%'")
+
+            where_sql = f"WHERE {' AND '.join(where_parts)} "
+            sql_to_execute = f"SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events {where_sql}ORDER BY time DESC LIMIT 5"
+
+        elif subtype == "regional_activity":
+            where_parts = []
+            if catalog.target_location:
+                loc = catalog.target_location.lower()
+                where_parts.append(f"LOWER(place) LIKE '%{loc}%'")
+            if is_24h:
+                where_parts.append(time_clause_24h)
+
+            where_sql = f"WHERE {' AND '.join(where_parts)} " if where_parts else ""
+            sql_to_execute = f"SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events {where_sql}ORDER BY time DESC LIMIT 10"
+
         elif subtype == "aggregation":
-            sql_to_execute = "SELECT place, COUNT(*) as count, ROUND(AVG(mag), 2) as avg_mag FROM earthquake_events GROUP BY place ORDER BY count DESC LIMIT 5"
-        elif subtype == "regional_activity" and catalog.target_location:
-            loc = catalog.target_location.lower()
-            sql_to_execute = f"SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events WHERE LOWER(place) LIKE '%{loc}%' ORDER BY time DESC LIMIT 5"
+            where_sql = f"WHERE {time_clause_24h} " if is_24h else ""
+            sql_to_execute = f"SELECT place, COUNT(*) as count, ROUND(AVG(mag), 2) as avg_mag FROM earthquake_events {where_sql}GROUP BY place ORDER BY count DESC LIMIT 5"
+
         else:
             # Fallback a Text-to-SQL guiado por LLM
             try:
@@ -513,7 +591,8 @@ class CognitiveAgent:
                 pass
 
             if not sql_to_execute:
-                sql_to_execute = "SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events ORDER BY time DESC LIMIT 5"
+                where_sql = f"WHERE {time_clause_24h} " if is_24h else ""
+                sql_to_execute = f"SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events {where_sql}ORDER BY time DESC LIMIT 5"
 
         # Salvaguarda de LIMIT obligatorio
         upper_sql = sql_to_execute.upper()
@@ -550,33 +629,38 @@ class CognitiveAgent:
                         f"*(Información en tiempo real sincronizada desde USGS en DuckDB)*"
                     )
                 elif subtype == "strongest_events":
+                    period_str = " (últimas 24 horas)" if is_24h else ""
                     reply = (
-                        f"💥 **Sismo de mayor magnitud registrado:**\n\n"
+                        f"💥 **Sismo de mayor magnitud registrado{period_str}:**\n\n"
                         f"• **Epicentro:** *{place_str}*\n"
                         f"• **Magnitud:** **{mag_val} Mw**\n"
                         f"• **Profundidad:** **{depth_val} km**\n"
                         f"• **Hora:** {time_val}\n\n"
-                        f"Se presentan los {row_count} sismos de mayor intensidad sísmica:"
+                        f"Se presentan los {row_count} sismos de mayor intensidad sísmica{period_str}:"
                     )
                 elif subtype == "tsunami_alerts":
+                    period_str = " en las últimas 24 horas" if is_24h else ""
                     reply = (
-                        f"🌊 **Eventos sísmicos con alerta de tsunami:**\n\n"
+                        f"🌊 **Eventos sísmicos con alerta de tsunami{period_str}:**\n\n"
                         f"Se encontraron **{row_count} eventos** con indicador de tsunami activo. "
                         f"El evento principal se registró en *{place_str}* con magnitud **{mag_val} Mw**."
                     )
                 elif "count" in top_item and "place" in top_item:
+                    period_str = " (últimas 24 horas)" if is_24h else ""
                     reply = (
-                        f"📊 **Zonas con mayor concentración sísmica:**\n\n"
+                        f"📊 **Zonas con mayor concentración sísmica{period_str}:**\n\n"
                         f"La zona con mayor frecuencia es *'{top_item['place']}'* con **{top_item.get('count', 0)} sismos** "
                         f"y una magnitud promedio de **{top_item.get('avg_mag', 0)} Mw**."
                     )
                 else:
+                    period_str = " en las últimas 24 horas" if is_24h else ""
                     reply = (
-                        f"📊 Se recuperaron **{row_count} eventos sísmicos** en DuckDB.\n\n"
+                        f"📊 Se recuperaron **{row_count} eventos sísmicos** en DuckDB{period_str}.\n\n"
                         f"El evento principal es de magnitud **{mag_val} Mw** en *'{place_str}'* ({time_val})."
                     )
             else:
-                reply = "La consulta se ejecutó exitosamente pero no se encontraron registros que coincidan con esos criterios."
+                period_str = " en las últimas 24 horas" if is_24h else ""
+                reply = f"No se encontraron registros sísmicos que coincidan con los criterios solicitados{period_str}."
 
         except Exception as e:
             logger.error(f"Error ejecutando consulta analítica: {e}")

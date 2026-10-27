@@ -35,7 +35,22 @@ def infer_chart_type(data: list, columns: list) -> Optional[ChartSuggestion]:
         else:
             categorical_cols.append(col)
 
-    # 1. Serie de tiempo (Eje X temporal + Métrica numérica)
+    # 1. Ranking de eventos / magnitudes por lugar (Barras categóricas)
+    if any("place" in c.lower() for c in categorical_cols) and "mag" in numeric_cols:
+        for row in data:
+            if "place" in row and isinstance(row["place"], str):
+                p_val = row["place"]
+                if " of " in p_val:
+                    p_val = p_val.split(" of ", 1)[1]
+                row["place_short"] = p_val[:22]
+        return ChartSuggestion(
+            type="bar",
+            title="Ranking de Magnitud (Mw) por Epicentro",
+            x_key="place_short" if "place_short" in data[0] else "place",
+            y_key="mag",
+        )
+
+    # 2. Serie de tiempo cronológica (Eje X temporal + Métrica numérica)
     if time_cols and numeric_cols:
         if len(data) > 40:
             return None  # Evitar gráficos saturados con demasiados puntos individuales
@@ -54,7 +69,7 @@ def infer_chart_type(data: list, columns: list) -> Optional[ChartSuggestion]:
             y_key=numeric_cols[0],
         )
 
-    # 2. Barras categóricas (Eje X categoría + Métrica numérica)
+    # 3. Barras categóricas estándar (Eje X categoría + Métrica numérica)
     if categorical_cols and numeric_cols:
         return ChartSuggestion(
             type="bar",
@@ -64,7 +79,7 @@ def infer_chart_type(data: list, columns: list) -> Optional[ChartSuggestion]:
             secondary_y_key=numeric_cols[1] if len(numeric_cols) > 1 else None,
         )
 
-    # 3. Dos columnas numéricas (ej. mag vs depth)
+    # 4. Dos columnas numéricas (ej. mag vs depth)
     if len(numeric_cols) >= 2:
         return ChartSuggestion(
             type="bar",
