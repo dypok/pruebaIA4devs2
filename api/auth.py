@@ -85,9 +85,6 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    if raw_token in ("mock-initial-token", "local-dev-token"):
-        return {"username": "admin", "role": "admin"}
-
     payload = decode_token(raw_token)
     username = payload.get("sub")
     role = payload.get("role")

@@ -7,26 +7,13 @@ import duckdb
 
 logger = logging.getLogger(__name__)
 
-# Semilla inicial en caso de que aún no haya corrido ningún DAG de Airflow
-SAMPLE_EVENTS = [
-    {"id": "ci41353455", "mag": 3.8, "place": "23 km ESE of Anza, CA", "time": "2026-10-27T06:10:00Z", "longitude": -116.42, "latitude": 33.45, "depth_km": 12.4, "tsunami": 0, "sig": 220, "mag_type": "ml", "status": "reviewed", "processing_status": "VALID"},
-    {"id": "us6000tyxk", "mag": 5.4, "place": "3 km ESE of Sugito, Japan", "time": "2026-10-27T05:40:00Z", "longitude": 139.75, "latitude": 36.02, "depth_km": 45.0, "tsunami": 0, "sig": 450, "mag_type": "mww", "status": "reviewed", "processing_status": "VALID"},
-    {"id": "nc74019281", "mag": 2.1, "place": "7 km WNW of Cobb, CA", "time": "2026-10-27T05:15:00Z", "longitude": -122.80, "latitude": 38.83, "depth_km": 2.1, "tsunami": 0, "sig": 68, "mag_type": "md", "status": "automatic", "processing_status": "VALID"},
-    {"id": "ak024d27f8", "mag": 4.1, "place": "54 km S of Whites City, NM", "time": "2026-10-27T04:50:00Z", "longitude": -104.35, "latitude": 31.68, "depth_km": 8.0, "tsunami": 0, "sig": 258, "mag_type": "ml", "status": "reviewed", "processing_status": "VALID"},
-    {"id": "us6000tyya", "mag": 6.2, "place": "Off the coast of Bio-Bio, Chile", "time": "2026-10-27T03:30:00Z", "longitude": -73.80, "latitude": -37.15, "depth_km": 28.5, "tsunami": 1, "sig": 590, "mag_type": "mww", "status": "reviewed", "processing_status": "VALID"},
-    {"id": "ci41353490", "mag": 1.9, "place": "12 km N of Borrego Springs, CA", "time": "2026-10-27T03:00:00Z", "longitude": -116.37, "latitude": 33.36, "depth_km": 10.2, "tsunami": 0, "sig": 56, "mag_type": "ml", "status": "automatic", "processing_status": "VALID"},
-    {"id": "us6000tyyb", "mag": 4.9, "place": "Near coast of Central Peru", "time": "2026-10-27T02:10:00Z", "longitude": -77.40, "latitude": -11.90, "depth_km": 52.0, "tsunami": 0, "sig": 370, "mag_type": "mww", "status": "reviewed", "processing_status": "VALID"},
-    {"id": "ak024d27f9", "mag": 3.2, "place": "18 km ENE of Sutton-Alpine, Alaska", "time": "2026-10-27T01:25:00Z", "longitude": -148.55, "latitude": 61.85, "depth_km": 34.0, "tsunami": 0, "sig": 160, "mag_type": "ml", "status": "reviewed", "processing_status": "VALID"},
-]
-
-
 class DuckDBService:
     def __init__(self):
         self.conn = duckdb.connect(database=":memory:")
         self._init_database()
 
     def _init_database(self):
-        """Inicializa esquemas y vistas sobre Parquet / datos iniciales."""
+        """Inicializa esquemas y vistas sobre Parquet en MinIO S3 y conexión Postgres."""
         try:
             self.conn.execute("INSTALL httpfs; LOAD httpfs;")
             endpoint = os.getenv("MINIO_ENDPOINT", "http://minio:9000").replace("http://", "").replace("https://", "")
@@ -41,6 +28,19 @@ class DuckDBService:
             """)
         except Exception as e:
             logger.warning(f"Configuración S3 para DuckDB falló o ya inicializada: {e}")
+
+        # Conectar a PostgreSQL para metadatos reales
+        try:
+            self.conn.execute("INSTALL postgres; LOAD postgres;")
+            pg_host = os.getenv("POSTGRES_HOST", "postgres")
+            pg_port = os.getenv("POSTGRES_PORT", "5432")
+            pg_db = os.getenv("POSTGRES_DB", "sismowatch_db")
+            pg_user = os.getenv("POSTGRES_ADMIN_USER", "postgres")
+            pg_pass = os.getenv("POSTGRES_ADMIN_PASSWORD", "postgres_master_secure_pass_2026!")
+            self.conn.execute(f"ATTACH 'dbname={pg_db} user={pg_user} password={pg_pass} host={pg_host} port={pg_port}' AS pg (TYPE postgres);")
+            logger.info("DuckDB conectado a PostgreSQL exitosamente.")
+        except Exception as e:
+            logger.warning(f"No se pudo conectar DuckDB a PostgreSQL: {e}")
 
         # Crear tabla en memoria con estructura base
         self.conn.execute("""
@@ -60,19 +60,15 @@ class DuckDBService:
             );
         """)
 
-        # Insertar registros semilla iniciales para garantizar que nunca haya pantalla en blanco
-        for ev in SAMPLE_EVENTS:
-            self.conn.execute("""
-                INSERT OR REPLACE INTO events_memory 
-                VALUES (?, ?, ?, ?::TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?);
-            """, [
-                ev["id"], ev["mag"], ev["place"], ev["time"],
-                ev["longitude"], ev["latitude"], ev["depth_km"],
-                ev["tsunami"], ev["sig"], ev["status"], ev["mag_type"],
-                ev["processing_status"]
-            ])
+        # Crear vista earthquake_events sobre datos reales
+        self.conn.execute("""
+            CREATE OR REPLACE VIEW earthquake_events AS 
+            SELECT * FROM events_memory WHERE processing_status = 'VALID';
+        """)
 
-        # Crear vista earthquake_events
+        # Cargar datos desde MinIO Gold Parquet
+        self.refresh_from_s3()
+        logger.info("DuckDB inicializado con vista analítica 'earthquake_events'.")
         self.conn.execute("""
             CREATE OR REPLACE VIEW earthquake_events AS 
             SELECT * FROM events_memory WHERE processing_status = 'VALID';
@@ -126,7 +122,7 @@ class DuckDBService:
                 COALESCE(MAX(mag), 0.0) as max_mag,
                 COALESCE(ROUND(AVG(mag), 2), 0.0) as avg_mag,
                 COALESCE(SUM(CASE WHEN tsunami = 1 THEN 1 ELSE 0 END), 0) as tsunami_count,
-                COALESCE(strftime(MAX(time), '%Y-%m-%dT%H:%M:%SZ'), '2026-10-27T07:05:00Z') as last_update
+                strftime(MAX(time), '%Y-%m-%dT%H:%M:%SZ') as last_update
             FROM earthquake_events;
         """).fetchone()
 
@@ -134,14 +130,25 @@ class DuckDBService:
         max_mag = float(res[1])
         avg_mag = float(res[2])
         tsunami_count = int(res[3])
-        last_update = str(res[4])
+        last_update = str(res[4]) if res[4] else datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        # Cálculo de calidad real basado en Silver
+        try:
+            inv = self.conn.execute("""
+                SELECT COUNT(*) FROM read_parquet('s3://sismowatch-lake/silver/**/*.parquet')
+                WHERE processing_status = 'INVALID';
+            """).fetchone()[0]
+            tot = total + inv
+            quality_score = round(100.0 * total / tot, 2) if tot > 0 else 100.0
+        except Exception:
+            quality_score = 100.0
 
         return {
             "total_events_24h": total,
             "max_magnitude": max_mag,
             "avg_magnitude": avg_mag,
             "tsunami_alerts": tsunami_count,
-            "quality_score": 98.5,
+            "quality_score": quality_score,
             "last_updated": last_update,
         }
 

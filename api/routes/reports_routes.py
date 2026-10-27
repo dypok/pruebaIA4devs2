@@ -1,61 +1,39 @@
-from datetime import datetime, timezone
+import json
+import logging
 from typing import List, Dict, Any
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Response, HTTPException
 from auth import require_viewer
 from duckdb_service import duckdb_service
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/reports", tags=["Reportes"])
-
-# Historial de reportes ejecutivos en memoria
-REPORTS_HISTORY = [
-    {
-        "id": 1,
-        "report_date": "2026-10-27",
-        "title": "Reporte Ejecutivo Sísmico Diario - 2026-10-27",
-        "executive_summary": (
-            "Durante la jornada del 2026-10-27, la red de monitoreo registró un total de 142 sismos a nivel global. "
-            "La magnitud promedio se situó en 2.65, alcanzando una magnitud máxima de 5.8 frente a las costas de Bio-Bio, Chile. "
-            "No se emitieron alertas de tsunami mayores destructivas. Las áreas con mayor concentración fueron Southern California y el norte de Chile. "
-            "Se recomienda a los equipos operativos de SuperApp mantener vigilancia preventiva en los centros logísticos de la costa del Pacífico."
-        ),
-        "active_zones": [
-            {"place": "Southern California, USA", "count": 34},
-            {"place": "Northern Chile", "count": 18},
-            {"place": "Central Japan", "count": 12},
-        ],
-        "highlighted_events": [
-            {"place": "Off the coast of Bio-Bio, Chile", "mag": 5.8, "depth_km": 35.2},
-            {"place": "Near Anza, California", "mag": 4.2, "depth_km": 12.0},
-        ],
-        "ai_verified": True,
-        "generated_at": "2026-10-27T06:00:00Z",
-    },
-    {
-        "id": 2,
-        "report_date": "2026-10-26",
-        "title": "Reporte Ejecutivo Sísmico Diario - 2026-10-26",
-        "executive_summary": (
-            "El 2026-10-26 transcurrió con actividad sísmica moderada, registrándose 128 eventos en la red global. "
-            "La magnitud promedio fue de 2.48 con una magnitud pico de 5.1 en las islas Kuriles. "
-            "Todas las operaciones logísticas y de transporte operaron con total normalidad sin incidencias."
-        ),
-        "active_zones": [
-            {"place": "Southern California, USA", "count": 28},
-            {"place": "Kuril Islands, Russia", "count": 14},
-        ],
-        "highlighted_events": [
-            {"place": "Kuril Islands", "mag": 5.1, "depth_km": 42.0},
-        ],
-        "ai_verified": True,
-        "generated_at": "2026-10-26T06:00:00Z",
-    },
-]
 
 
 @router.get("", response_model=List[Dict[str, Any]])
 def get_reports_history(user: dict = Depends(require_viewer)):
-    """Retorna el historial de reportes diarios generados por IA."""
-    return REPORTS_HISTORY
+    """Retorna el historial de reportes diarios generados por IA desde la base de datos PostgreSQL."""
+    try:
+        rows = duckdb_service.conn.execute("""
+            SELECT id, report_date, title, executive_summary, active_zones, highlighted_events, ai_verified, generated_at
+            FROM pg.curated.ai_reports
+            ORDER BY generated_at DESC;
+        """).fetchall()
+        reports = []
+        for r in rows:
+            reports.append({
+                "id": r[0],
+                "report_date": str(r[1]),
+                "title": r[2],
+                "executive_summary": r[3],
+                "active_zones": json.loads(r[4]) if isinstance(r[4], str) else (r[4] or []),
+                "highlighted_events": json.loads(r[5]) if isinstance(r[5], str) else (r[5] or []),
+                "ai_verified": bool(r[6]),
+                "generated_at": r[7].isoformat() if hasattr(r[7], 'isoformat') else str(r[7]),
+            })
+        return reports
+    except Exception as e:
+        logger.error(f"Error consultando curated.ai_reports en Postgres: {e}")
+        raise HTTPException(status_code=500, detail=f"Error consultando reportes en base de datos: {e}")
 
 
 @router.get("/export")
@@ -64,9 +42,11 @@ def export_reports_or_events(
     user: dict = Depends(require_viewer),
 ):
     """
-    Exportación de eventos o reportes en formato CSV o HTML descargable.
+    Exportación de eventos reales del Lakehouse en formato CSV o HTML descargable.
     """
     events_data = duckdb_service.get_events(page=1, page_size=1000)["events"]
+    if not events_data:
+        raise HTTPException(status_code=404, detail="No hay eventos sísmicos registrados para exportar.")
 
     if format == "csv":
         import io
@@ -90,46 +70,37 @@ def export_reports_or_events(
             headers={"Content-Disposition": "attachment; filename=sismowatch_events_export.csv"},
         )
 
-    # Exportación HTML formateada
+    # Exportación HTML formateada con datos reales
+    rows_html = "".join([
+        f"<tr><td>{e['id']}</td><td>{e['place']}</td><td><b>{e['mag']}</b></td><td>{e['depth_km']} km</td><td>{e['time']}</td></tr>"
+        for e in events_data[:100]
+    ])
+
     html_content = f"""<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Reporte SismoWatch - Exportación Oficial</title>
+    <title>Reporte SismoWatch - Exportación Certificada</title>
     <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 40px; color: #1e293b; }}
-        h1 {{ color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 12px; }}
-        .meta {{ color: #64748b; font-size: 14px; margin-bottom: 24px; }}
-        table {{ width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 13px; }}
-        th, td {{ border: 1px solid #cbd5e1; padding: 8px 12px; text-align: left; }}
-        th {{ background-color: #f8fafc; font-weight: 600; }}
-        tr:nth-child(even) {{ background-color: #f1f5f9; }}
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 40px; color: #1e293b; background: #f8fafc; }}
+        h1 {{ color: #0284c7; }}
+        table {{ width: 100%; border-collapse: collapse; margin-top: 20px; background: white; }}
+        th, td {{ padding: 10px; border: 1px solid #cbd5e1; text-align: left; font-size: 13px; }}
+        th {{ background: #0f172a; color: white; }}
     </style>
 </head>
 <body>
-    <h1>🌍 SismoWatch - Informe Ejecutivo y Catálogo Sísmico</h1>
-    <div class="meta">Generado el: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')} | SuperApp RiskOps</div>
-    <h2>Eventos Sísmicos Recientes ({len(events_data)} registros)</h2>
+    <h1>SismoWatch - Exportación de Eventos Certificados (DuckDB Lakehouse)</h1>
+    <p>Total de registros exportados: {len(events_data)}</p>
     <table>
         <thead>
-            <tr>
-                <th>ID</th>
-                <th>Magnitud</th>
-                <th>Ubicación</th>
-                <th>Fecha UTC</th>
-                <th>Profundidad</th>
-                <th>Tsunami</th>
-            </tr>
+            <tr><th>ID</th><th>Lugar</th><th>Magnitud</th><th>Profundidad</th><th>Fecha UTC</th></tr>
         </thead>
         <tbody>
-            {''.join([f"<tr><td>{e['id']}</td><td><b>{e['mag']}</b></td><td>{e['place']}</td><td>{e['time']}</td><td>{e['depth_km']} km</td><td>{'Sí' if e['tsunami'] == 1 else 'No'}</td></tr>" for e in events_data[:50]])}
+            {rows_html}
         </tbody>
     </table>
 </body>
 </html>"""
 
-    return Response(
-        content=html_content,
-        media_type="text/html",
-        headers={"Content-Disposition": "attachment; filename=sismowatch_report.html"},
-    )
+    return Response(content=html_content, media_type="text/html")

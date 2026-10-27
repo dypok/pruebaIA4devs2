@@ -223,13 +223,31 @@ export const ChatbotDrawer: React.FC<ChatbotDrawerProps> = ({
                     <ResponsiveContainer width="100%" height="100%">
                       {m.chart.type === 'line' ? (
                         <LineChart data={m.data} margin={{ top: 5, right: 10, left: -25, bottom: 0 }}>
-                          <XAxis dataKey={m.chart.x_key} stroke="#64748b" fontSize={10} tickLine={false} />
+                          <XAxis
+                            dataKey={m.chart.x_key}
+                            stroke="#64748b"
+                            fontSize={10}
+                            tickLine={false}
+                            tickFormatter={(val) => {
+                              if (typeof val === 'string' && val.length > 10) {
+                                return val.includes(' ') ? val.split(' ')[0] : val.substring(0, 10);
+                              }
+                              return val;
+                            }}
+                          />
                           <YAxis stroke="#64748b" fontSize={10} tickLine={false} />
                           <Tooltip
                             contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '4px' }}
                             itemStyle={{ color: '#38bdf8' }}
                           />
-                          <Line type="monotone" dataKey={m.chart.y_key} stroke="#38bdf8" strokeWidth={2} />
+                          <Line
+                            type="monotone"
+                            dataKey={m.chart.y_key}
+                            stroke="#38bdf8"
+                            strokeWidth={2}
+                            dot={{ r: 3, fill: '#38bdf8' }}
+                            activeDot={{ r: 5 }}
+                          />
                         </LineChart>
                       ) : (
                         <BarChart data={m.data} margin={{ top: 5, right: 10, left: -25, bottom: 0 }}>

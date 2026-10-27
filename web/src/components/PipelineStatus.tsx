@@ -150,30 +150,40 @@ export const PipelineStatus: React.FC = () => {
             Se preservaron en la capa Silver con motivo de rechazo y activaron la alerta en Airflow para corrección del operador.
           </p>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse font-sans">
-              <thead>
-                <tr className="border-b border-slate-800 text-[11px] font-mono uppercase text-slate-400 bg-slate-950/60">
-                  <th className="py-2 px-3">ID Evento</th>
-                  <th className="py-2 px-3">Coordenadas</th>
-                  <th className="py-2 px-3">Magnitud</th>
-                  <th className="py-2 px-3">Motivo de Rechazo (Validation Error)</th>
-                  <th className="py-2 px-3 text-right">Capturado (UTC)</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60">
-                {quarantine.map((item, idx) => (
-                  <tr key={idx} className="hover:bg-slate-800/30">
-                    <td className="py-2.5 px-3 font-mono font-semibold text-amber-400">{item.id}</td>
-                    <td className="py-2.5 px-3 font-mono text-slate-300">[{item.latitude}, {item.longitude}]</td>
-                    <td className="py-2.5 px-3 font-mono font-bold text-rose-400">{item.mag}</td>
-                    <td className="py-2.5 px-3 text-rose-300 font-mono text-[11px]">{item.validation_error}</td>
-                    <td className="py-2.5 px-3 font-mono text-slate-400 text-right">{item.quarantined_at?.slice(0, 19).replace('T', ' ')}</td>
+          {quarantine.length === 0 ? (
+            <div className="p-6 bg-slate-950/40 rounded border border-slate-800/80 text-center font-mono text-xs text-slate-400 space-y-1">
+              <CheckCircle className="w-5 h-5 text-emerald-400 mx-auto mb-1.5" />
+              <div className="text-slate-200 font-semibold">Cero registros en cuarentena</div>
+              <div className="text-[11px] text-slate-500">
+                Todas las validaciones de Pandera en la capa Silver de MinIO S3 fueron conformes (0 registros con estado INVALID).
+              </div>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse font-sans">
+                <thead>
+                  <tr className="border-b border-slate-800 text-[11px] font-mono uppercase text-slate-400 bg-slate-950/60">
+                    <th className="py-2 px-3">ID Evento</th>
+                    <th className="py-2 px-3">Coordenadas</th>
+                    <th className="py-2 px-3">Magnitud</th>
+                    <th className="py-2 px-3">Motivo de Rechazo (Validation Error)</th>
+                    <th className="py-2 px-3 text-right">Capturado (UTC)</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {quarantine.map((item, idx) => (
+                    <tr key={idx} className="hover:bg-slate-800/30">
+                      <td className="py-2.5 px-3 font-mono font-semibold text-amber-400">{item.id}</td>
+                      <td className="py-2.5 px-3 font-mono text-slate-300">[{item.latitude}, {item.longitude}]</td>
+                      <td className="py-2.5 px-3 font-mono font-bold text-rose-400">{item.mag}</td>
+                      <td className="py-2.5 px-3 text-rose-300 font-mono text-[11px]">{item.validation_error}</td>
+                      <td className="py-2.5 px-3 font-mono text-slate-400 text-right">{item.quarantined_at?.slice(0, 19).replace('T', ' ')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       ) : (
         <div className="bg-slate-900/40 border border-amber-500/30 rounded-lg p-5">

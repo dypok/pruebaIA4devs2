@@ -14,6 +14,7 @@ import {
   KpiData,
   SeismicEvent,
   TimeseriesPoint,
+  TopRegionItem,
   AiReport,
   PinnedChart,
 } from './types';
@@ -21,6 +22,7 @@ import {
   fetchKpis,
   fetchEvents,
   fetchTimeseries,
+  fetchTopRegions,
   fetchReports,
 } from './services/api';
 
@@ -45,8 +47,10 @@ export const AppContent: React.FC = () => {
   const [minMagnitude, setMinMagnitude] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [timeseries, setTimeseries] = useState<TimeseriesPoint[]>([]);
+  const [topRegions, setTopRegions] = useState<TopRegionItem[]>([]);
   const [reports, setReports] = useState<AiReport[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dataError, setDataError] = useState<string | null>(null);
 
   // Gráficos fijados desde el Chatbot (persistidos en localStorage)
   const [pinnedCharts, setPinnedCharts] = useState<PinnedChart[]>(() => {
@@ -71,14 +75,16 @@ export const AppContent: React.FC = () => {
     setPinnedCharts((prev) => prev.filter((c) => c.id !== id));
   };
 
-  // Carga inicial de datos
+  // Carga inicial de datos reales
   const loadInitialData = async () => {
+    setDataError(null);
     try {
-      const [kpisData, eventsData, timeseriesData, reportsData] = await Promise.all([
-        fetchKpis().catch(() => null),
-        fetchEvents({ page, page_size: pageSize, min_magnitude: minMagnitude, region: searchQuery }).catch(() => ({ total: 0, page: 1, events: [] })),
-        fetchTimeseries().catch(() => []),
-        fetchReports().catch(() => []),
+      const [kpisData, eventsData, timeseriesData, regionsData, reportsData] = await Promise.all([
+        fetchKpis(),
+        fetchEvents({ page, page_size: pageSize, min_magnitude: minMagnitude, region: searchQuery }),
+        fetchTimeseries(),
+        fetchTopRegions(),
+        fetchReports(),
       ]);
 
       if (kpisData) setKpis(kpisData);
@@ -87,9 +93,11 @@ export const AppContent: React.FC = () => {
         setTotalEvents(eventsData.total || 0);
       }
       if (timeseriesData) setTimeseries(timeseriesData);
+      if (regionsData) setTopRegions(regionsData);
       if (reportsData) setReports(reportsData);
-    } catch (e) {
-      console.error('Error cargando datos iniciales:', e);
+    } catch (e: any) {
+      console.error('Error cargando datos reales:', e);
+      setDataError(e.message || 'Error consultando datos del Lakehouse');
     } finally {
       setLoading(false);
     }
@@ -158,6 +166,14 @@ export const AppContent: React.FC = () => {
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+        {/* Banner de Error Literal si falla alguna consulta */}
+        {dataError && (
+          <div className="p-3 bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-mono rounded flex items-center justify-between">
+            <span><b>Error de Datos:</b> {dataError}</span>
+            <button onClick={() => setDataError(null)} className="text-slate-400 hover:text-white">&times;</button>
+          </div>
+        )}
+
         {/* Ribbon de Métricas (Siempre visible en Dashboard) */}
         {activeTab === 'dashboard' && (
           <MetricRibbon kpis={kpis} loading={loading} />
@@ -186,16 +202,10 @@ export const AppContent: React.FC = () => {
               onRefreshAll={loadInitialData}
             />
 
-            {/* Gráficos de Serie Temporal y Regiones */}
+            {/* Gráficos de Serie Temporal y Regiones Reales */}
             <SeismicCharts
               timeseries={timeseries}
-              topRegions={[
-                { region: 'California, USA', count: 38, avg_mag: 2.1 },
-                { region: 'Chile', count: 22, avg_mag: 4.8 },
-                { region: 'Japan', count: 16, avg_mag: 4.5 },
-                { region: 'Alaska, USA', count: 14, avg_mag: 3.2 },
-                { region: 'Peru', count: 9, avg_mag: 4.1 },
-              ]}
+              topRegions={topRegions}
             />
 
             {/* Tabla de Eventos Paginada con Filtros */}

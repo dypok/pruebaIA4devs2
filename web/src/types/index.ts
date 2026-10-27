@@ -28,6 +28,12 @@ export interface TimeseriesPoint {
   max_mag: number;
 }
 
+export interface TopRegionItem {
+  region: string;
+  count: number;
+  avg_mag: number;
+}
+
 export interface ChartSuggestion {
   type: 'bar' | 'line' | 'area' | 'pie' | 'metric';
   title: string;

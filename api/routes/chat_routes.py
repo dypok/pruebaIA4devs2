@@ -37,6 +37,16 @@ def infer_chart_type(data: list, columns: list) -> Optional[ChartSuggestion]:
 
     # 1. Serie de tiempo (Eje X temporal + Métrica numérica)
     if time_cols and numeric_cols:
+        if len(data) > 40:
+            return None  # Evitar gráficos saturados con demasiados puntos individuales
+
+        # Formatear timestamps para que los labels de los ejes sean limpios (YYYY-MM-DD HH:mm)
+        for row in data:
+            for t_col in time_cols:
+                val = row.get(t_col)
+                if isinstance(val, str) and len(val) >= 16 and "T" in val:
+                    row[t_col] = val.replace("T", " ")[:16]
+
         return ChartSuggestion(
             type="line",
             title=f"Evolución Temporal de {numeric_cols[0].replace('_', ' ').title()}",
@@ -123,18 +133,73 @@ def chat_with_data_agent(
     if not clean_prompt:
         raise HTTPException(status_code=400, detail="El mensaje no puede estar vacío.")
 
+    # 0. Interceptación inteligente de mensajes conversacionales, saludos y ayuda
+    normalized = clean_prompt.lower().strip("?!.,;: ")
+    greetings = {"hola", "buenas", "buen dia", "buenos dias", "buenas tardes", "buenas noches", "hey", "hello", "hi", "saludos"}
+    help_queries = {"que puedes hacer", "que haces", "ayuda", "help", "como funciona", "opciones", "quien eres"}
+    thanks_queries = {"gracias", "muchas gracias", "ok", "vale", "listo", "perfecto", "adios", "chao", "hasta luego"}
+
+    if normalized in greetings or any(normalized.startswith(g + " ") for g in greetings):
+        return ChatResponse(
+            reply=(
+                "¡Hola! 👋 Soy tu asistente analítico de SismoWatch impulsado por IA local (Qwen 2.5:2b).\n\n"
+                "Puedo responder preguntas en lenguaje natural sobre sismos, regiones de mayor concentración, "
+                "alertas de tsunami o tendencias temporales, generando consultas SQL y gráficos interactivos que puedes fijar al dashboard.\n\n"
+                "💡 **Prueba preguntándome:**\n"
+                "• *¿Cuáles son los 5 sismos más fuertes de este mes?*\n"
+                "• *¿Qué zonas tienen mayor concentración de sismos?*\n"
+                "• *¿Hubo sismos con alerta de tsunami?*\n"
+                "• *¿Cuál fue el sismo más reciente?*"
+            ),
+            sql=None,
+            data=[],
+            chart_suggestion=None,
+            row_count=0,
+        )
+
+    if normalized in help_queries or "puedes hacer" in normalized or "como te uso" in normalized:
+        return ChatResponse(
+            reply=(
+                "Estoy conectado en tiempo real al Lakehouse en MinIO y a DuckDB.\n\n"
+                "Traduzco tus preguntas a consultas SQL optimizadas sobre la vista `earthquake_events` y genero gráficos interactivos para tu dashboard.\n\n"
+                "📌 **Consultas sugeridas:**\n"
+                "• *'Los 5 sismos más fuertes'*\n"
+                "• *'Top 5 regiones con más sismos'*\n"
+                "• *'Sismos con alerta de tsunami'*\n"
+                "• *'Sismos de magnitud mayor a 6'*"
+            ),
+            sql=None,
+            data=[],
+            chart_suggestion=None,
+            row_count=0,
+        )
+
+    if normalized in thanks_queries:
+        return ChatResponse(
+            reply="¡Con gusto! Quedo a tu disposición si necesitas analizar algún otro evento sísmico o métrica.",
+            sql=None,
+            data=[],
+            chart_suggestion=None,
+            row_count=0,
+        )
+
     # 1. Intentar Text-to-SQL con Ollama (Qwen 2.5:2b)
     sql_to_execute = None
     try:
         sys_prompt = (
-            "Genera ÚNICAMENTE una consulta SQL válida para DuckDB sobre la vista `earthquake_events` "
-            "(columnas: id, mag, place, time, longitude, latitude, depth_km, tsunami, sig). "
-            "Responde estrictamente con la consulta SQL pura comenzando con SELECT. Sin explicaciones ni markdown."
+            "Eres un asistente de datos SQL para DuckDB sobre la vista `earthquake_events` "
+            "(columnas: id, mag, place, time, longitude, latitude, depth_km, tsunami, sig).\n"
+            "Reglas estrictas:\n"
+            "1. Genera ÚNICAMENTE una consulta SQL válida comenzando con SELECT. Sin explicaciones ni bloques de markdown.\n"
+            "2. SIEMPRE incluye 'LIMIT 5' o 'LIMIT 10' si la consulta no tiene GROUP BY ni COUNT.\n"
+            "3. NUNCA devuelvas 'SELECT * FROM earthquake_events' sin LIMIT ni filtros.\n"
+            "4. Si piden los más fuertes o intensos, usa 'ORDER BY mag DESC LIMIT 5'.\n"
+            "5. Si piden los más recientes, usa 'ORDER BY time DESC LIMIT 8'."
         )
         ollama_url = f"{OLLAMA_BASE_URL}/api/generate"
         payload = {
             "model": OLLAMA_MODEL,
-            "prompt": f"{sys_prompt}\nPregunta: {clean_prompt}\nSQL:",
+            "prompt": f"{sys_prompt}\nPregunta del usuario: {clean_prompt}\nSQL:",
             "stream": False,
             "options": {"temperature": 0.1, "num_predict": 120}
         }
@@ -157,6 +222,11 @@ def chat_with_data_agent(
         reply = fb["reply"]
         sql_to_execute = fb["sql"]
     else:
+        # Salvaguarda: Si la consulta no tiene LIMIT ni agregaciones (GROUP BY / COUNT), limitar a 10
+        upper_sql = sql_to_execute.upper()
+        if "LIMIT" not in upper_sql and "GROUP BY" not in upper_sql and "COUNT(" not in upper_sql:
+            sql_to_execute = f"{sql_to_execute.rstrip(';')} LIMIT 10"
+
         try:
             res = duckdb_service.execute_read_only_query(sql_to_execute)
             reply = f"He ejecutado la consulta SQL sobre los eventos en DuckDB y recuperé {res['row_count']} registros."

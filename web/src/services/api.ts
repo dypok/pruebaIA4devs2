@@ -1,4 +1,4 @@
-import { KpiData, SeismicEvent, TimeseriesPoint, AiReport, PipelineTelemetry, ChartSuggestion } from '../types';
+import { KpiData, SeismicEvent, TimeseriesPoint, TopRegionItem, AiReport, PipelineTelemetry, ChartSuggestion } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
@@ -49,6 +49,12 @@ export async function fetchEvents(params: {
 export async function fetchTimeseries(): Promise<TimeseriesPoint[]> {
   const resp = await fetch(`${API_BASE}/api/stats/timeseries`, { headers: getAuthHeaders() });
   if (!resp.ok) throw new Error('Error obteniendo serie temporal');
+  return resp.json();
+}
+
+export async function fetchTopRegions(): Promise<TopRegionItem[]> {
+  const resp = await fetch(`${API_BASE}/api/stats/regions`, { headers: getAuthHeaders() });
+  if (!resp.ok) throw new Error('Error obteniendo regiones');
   return resp.json();
 }
 

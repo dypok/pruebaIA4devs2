@@ -74,7 +74,7 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: str
-    sql: str
-    data: List[Dict[str, Any]]
+    sql: Optional[str] = None
+    data: List[Dict[str, Any]] = []
     chart_suggestion: Optional[ChartSuggestion] = None
-    row_count: int
+    row_count: int = 0
