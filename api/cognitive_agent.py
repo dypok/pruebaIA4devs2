@@ -110,13 +110,14 @@ KNOWLEDGE_KB = {
 
 def _normalize_text(text: str) -> str:
     """Normaliza texto a minúsculas y elimina acentos y signos para matching semántico."""
-    t = text.lower().strip("?!.,;:¡¿'\" ")
+    t = text.lower()
     t = re.sub(r'[áàä]', 'a', t)
     t = re.sub(r'[éèë]', 'e', t)
     t = re.sub(r'[íìï]', 'i', t)
     t = re.sub(r'[óòö]', 'o', t)
     t = re.sub(r'[úùü]', 'u', t)
-    return t
+    t = re.sub(r'[^\w\s]', ' ', t)
+    return " ".join(t.split())
 
 
 class CognitiveAgent:

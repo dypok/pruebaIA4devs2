@@ -1,10 +1,22 @@
 from typing import Optional, List
 from fastapi import APIRouter, Depends, Query
-from schemas import KpiResponse, PaginatedEventsResponse, TimeseriesItem, TopRegionItem
+from schemas import KpiResponse, PaginatedEventsResponse, TimeseriesItem, TopRegionItem, EventItem
 from auth import require_viewer
 from duckdb_service import duckdb_service
 
 router = APIRouter(prefix="/api", tags=["Eventos y Analítica"])
+
+
+@router.get("/events/map", response_model=List[EventItem])
+def get_map_events(
+    limit: int = Query(500, ge=50, le=1000, description="Cantidad máxima de eventos para el mapa"),
+    user: dict = Depends(require_viewer),
+):
+    """
+    Retorna eventos prioritarios para la visualización en el mapa cartográfico global.
+    Incluye el 100% de alertas de tsunami activas y sismos significativos (mag >= 2.5).
+    """
+    return duckdb_service.get_map_events(limit=limit)
 
 
 @router.get("/kpis", response_model=KpiResponse)

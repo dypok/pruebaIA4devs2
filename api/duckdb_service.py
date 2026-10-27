@@ -282,6 +282,39 @@ class DuckDBService:
             for r in rows
         ]
 
+    def get_map_events(self, limit: int = 500) -> List[Dict[str, Any]]:
+        """
+        Retorna eventos prioritarios para la cartografía global (tsunamis + sismos significativos).
+        Asegura que el 100% de alertas activas de tsunami estén presentes en el mapa.
+        """
+        with self._lock:
+            cursor = self.conn.cursor()
+            rows = cursor.execute("""
+                SELECT id, mag, place, strftime(time, '%Y-%m-%dT%H:%M:%SZ') as time,
+                       longitude, latitude, depth_km, tsunami, sig, status, mag_type
+                FROM earthquake_events
+                WHERE tsunami = 1 OR mag >= 2.5
+                ORDER BY tsunami DESC, mag DESC
+                LIMIT ?;
+            """, [limit]).fetchall()
+
+            return [
+                {
+                    "id": r[0],
+                    "mag": float(r[1]),
+                    "place": r[2],
+                    "time": str(r[3]),
+                    "longitude": float(r[4]),
+                    "latitude": float(r[5]),
+                    "depth_km": float(r[6]),
+                    "tsunami": int(r[7]),
+                    "sig": int(r[8]),
+                    "status": r[9],
+                    "mag_type": r[10],
+                }
+                for r in rows
+            ]
+
     def execute_read_only_query(self, sql_query: str) -> Dict[str, Any]:
         """
         Ejecuta una consulta SQL de solo lectura validada sobre DuckDB.

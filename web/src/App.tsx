@@ -24,6 +24,7 @@ import {
   fetchTimeseries,
   fetchTopRegions,
   fetchReports,
+  fetchMapEvents,
 } from './services/api';
 
 export const AppContent: React.FC = () => {
@@ -41,6 +42,7 @@ export const AppContent: React.FC = () => {
   // Estados de datos
   const [kpis, setKpis] = useState<KpiData | null>(null);
   const [events, setEvents] = useState<SeismicEvent[]>([]);
+  const [mapEvents, setMapEvents] = useState<SeismicEvent[]>([]);
   const [totalEvents, setTotalEvents] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(15);
@@ -79,9 +81,10 @@ export const AppContent: React.FC = () => {
   const loadInitialData = async () => {
     setDataError(null);
     try {
-      const [kpisData, eventsData, timeseriesData, regionsData, reportsData] = await Promise.all([
+      const [kpisData, eventsData, mapEventsData, timeseriesData, regionsData, reportsData] = await Promise.all([
         fetchKpis(),
         fetchEvents({ page, page_size: pageSize, min_magnitude: minMagnitude, region: searchQuery }),
+        fetchMapEvents(500),
         fetchTimeseries(),
         fetchTopRegions(),
         fetchReports(),
@@ -91,6 +94,9 @@ export const AppContent: React.FC = () => {
       if (eventsData) {
         setEvents(eventsData.events || []);
         setTotalEvents(eventsData.total || 0);
+      }
+      if (mapEventsData) {
+        setMapEvents(mapEventsData);
       }
       if (timeseriesData) setTimeseries(timeseriesData);
       if (regionsData) setTopRegions(regionsData);
@@ -134,6 +140,12 @@ export const AppContent: React.FC = () => {
                 (item: SeismicEvent) => !prev.some((p) => p.id === item.id)
               );
               return [...newItems, ...prev].slice(0, 50);
+            });
+            setMapEvents((prev) => {
+              const newItems = payload.latest_events.filter(
+                (item: SeismicEvent) => !prev.some((p) => p.id === item.id)
+              );
+              return [...newItems, ...prev].slice(0, 500);
             });
             // Refrescar KPIs
             fetchKpis().then((k) => k && setKpis(k)).catch(() => {});
@@ -189,10 +201,10 @@ export const AppContent: React.FC = () => {
                   Cartografía Sísmica Global (Leaflet Dark Matter)
                 </span>
                 <span className="text-[11px] font-mono text-slate-400">
-                  {events.length} sismos proyectados
+                  {mapEvents.length} sismos globales ({mapEvents.filter((e) => e.tsunami === 1).length} alertas tsunami activas)
                 </span>
               </div>
-              <SeismicMap events={events} />
+              <SeismicMap events={mapEvents} />
             </div>
 
             {/* Sección de Gráficos Fijados desde el Chatbot IA (Requisito clave) */}
