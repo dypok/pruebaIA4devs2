@@ -154,14 +154,15 @@ class CognitiveAgent:
             '  "target_location": string o null,\n'
             '  "time_frame": "latest" | "24h" | "historical" | null,\n'
             '  "confidence": float entre 0.0 y 1.0,\n'
-            '  "reasoning": string de 3 a 5 palabras\n'
+            '  "reasoning": string breve de 3 a 5 palabras en ESPAÑOL (ej. "consulta del sismo mas reciente")\n'
             "}\n"
             "Reglas estrictas:\n"
-            "1. Preguntas sobre dónde, cuándo o cuál fue el último/más reciente sismo o temblor son SIEMPRE intent=\"ANALYTICS\" y subtype=\"latest_event\".\n"
-            "2. Preguntas sobre los sismos más fuertes o de mayor magnitud son intent=\"ANALYTICS\" y subtype=\"strongest_events\".\n"
-            "3. Preguntas sobre sismos en una región/país (ej. Chile, California) son intent=\"ANALYTICS\" y subtype=\"regional_activity\".\n"
-            "4. Preguntas conceptuales teóricas (qué es la falla de San Andrés, qué es la escala Richter) son intent=\"KNOWLEDGE\".\n"
-            "5. Saludos o preguntas de cortesía son intent=\"CONVERSATIONAL\".\n"
+            "1. Toda la respuesta DEBE estar 100% en ESPAÑOL. Está TERMINANTEMENTE PROHIBIDO responder en chino ni usar caracteres asiáticos.\n"
+            "2. Preguntas sobre dónde, cuándo o cuál fue el último/más reciente sismo o temblor son SIEMPRE intent=\"ANALYTICS\" y subtype=\"latest_event\".\n"
+            "3. Preguntas sobre los sismos más fuertes o de mayor magnitud son intent=\"ANALYTICS\" y subtype=\"strongest_events\".\n"
+            "4. Preguntas sobre sismos en una región/país (ej. Chile, California) son intent=\"ANALYTICS\" y subtype=\"regional_activity\".\n"
+            "5. Preguntas conceptuales teóricas (qué es la falla de San Andrés, qué es la escala Richter) son intent=\"KNOWLEDGE\".\n"
+            "6. Saludos o preguntas de cortesía son intent=\"CONVERSATIONAL\".\n"
             "Devuelve EXCLUSIVAMENTE el objeto JSON sin markdown ni texto adicional."
         )
 
@@ -203,6 +204,7 @@ class CognitiveAgent:
             if time_fr and time_fr.lower() == "null":
                 time_fr = None
             reasoning_str = catalog_data.get("reasoning", "Clasificado por Qwen 2.5:2b")
+            clean_reasoning = self._sanitize_reasoning(reasoning_str, subtype_norm, target_loc)
 
             return IntentCatalogMetadata(
                 intent=intent_norm,
@@ -210,13 +212,32 @@ class CognitiveAgent:
                 confidence=round(confidence_val, 2),
                 target_location=target_loc,
                 time_frame=time_fr,
-                reasoning=reasoning_str,
+                reasoning=clean_reasoning,
                 step1_latency_ms=step1_latency,
                 total_latency_ms=0.0
             )
 
         # Fallback determinista si el LLM no estuvo disponible
         return self._heuristic_fallback_catalog(clean_prompt, step1_latency)
+
+    def _sanitize_reasoning(self, reasoning: str, subtype: str, target_loc: Optional[str]) -> str:
+        """Garantiza que la descripción de auditoría esté 100% en español sin caracteres chinos/CJK."""
+        if not reasoning or re.search(r'[\u4e00-\u9fff]', reasoning):
+            descriptions = {
+                "latest_event": "Consulta del sismo más reciente en el catálogo",
+                "strongest_events": "Ranking de sismos de mayor intensidad sísmica",
+                "regional_activity": f"Filtro de sismos en {target_loc}" if target_loc else "Consulta de sismos por región geográfica",
+                "tsunami_alerts": "Verificación de alertas de tsunami activas",
+                "aggregation": "Concentración sísmica por territorio",
+                "science_concept": "Explicación conceptual de sismología",
+                "disaster_prevention": "Protocolo de prevención y seguridad",
+                "platform_telemetry": "Telemetría y estado operativo del Lakehouse",
+                "greeting": "Saludo y bienvenida al usuario",
+                "help_capabilities": "Orientación sobre capacidades del asistente",
+                "gratitude": "Respuesta a cortesía de usuario",
+            }
+            return descriptions.get(subtype, "Análisis de consulta sísmica")
+        return reasoning
 
     def _heuristic_fallback_catalog(self, prompt: str, latency_ms: float) -> IntentCatalogMetadata:
         """Catalogador heurístico resiliente de respaldo para garantizar cero fallos de red."""
