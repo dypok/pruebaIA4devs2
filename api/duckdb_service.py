@@ -120,20 +120,24 @@ class DuckDBService:
                     logger.error(f"Error insertando evento {ev.get('id')} en DuckDB: {e}")
 
     def get_kpis(self) -> Dict[str, Any]:
-        """Calcula los 6 KPIs principales en las últimas 24 horas."""
+        """Calcula los 6 KPIs principales estrictamente en las últimas 24 horas."""
         self.refresh_from_s3()
         with self._lock:
-            res = self.conn.execute("""
+            max_time_row = self.conn.execute("SELECT MAX(time) FROM earthquake_events;").fetchone()
+            max_time = max_time_row[0] if max_time_row and max_time_row[0] else datetime.now(timezone.utc)
+
+            res = self.conn.execute(f"""
                 SELECT 
                     COUNT(*) as total_events,
                     COALESCE(MAX(mag), 0.0) as max_mag,
                     COALESCE(ROUND(AVG(mag), 2), 0.0) as avg_mag,
                     COALESCE(SUM(CASE WHEN tsunami = 1 THEN 1 ELSE 0 END), 0) as tsunami_count,
                     strftime(MAX(time), '%Y-%m-%dT%H:%M:%SZ') as last_update
-                FROM earthquake_events;
+                FROM earthquake_events
+                WHERE time >= TIMESTAMP '{max_time}' - INTERVAL 24 HOUR;
             """).fetchone()
 
-            if res:
+            if res and res[0] > 0:
                 total = int(res[0])
                 max_mag = float(res[1])
                 avg_mag = float(res[2])
@@ -146,11 +150,11 @@ class DuckDBService:
                 tsunami_count = 0
                 last_update = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-            # Cálculo de calidad real basado en Silver
+            # Cálculo de calidad real basado en Silver en las últimas 24h
             try:
-                inv = self.conn.execute("""
+                inv = self.conn.execute(f"""
                     SELECT COUNT(*) FROM read_parquet('s3://sismowatch-lake/silver/**/*.parquet')
-                    WHERE processing_status = 'INVALID';
+                    WHERE processing_status = 'INVALID' AND time >= TIMESTAMP '{max_time}' - INTERVAL 24 HOUR;
                 """).fetchone()[0]
                 tot = total + inv
                 quality_score = round(100.0 * total / tot, 2) if tot > 0 else 100.0
@@ -176,7 +180,6 @@ class DuckDBService:
         end_date: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Consulta paginada de sismos con filtros de magnitud, región y fecha."""
-        self.refresh_from_s3()
         where_clauses = ["1=1"]
         params = []
 
@@ -197,111 +200,155 @@ class DuckDBService:
             params.append(end_date)
 
         where_sql = " AND ".join(where_clauses)
-        
-        # Conteo total (construido de forma segura con parámetros)
-        count_res = self.conn.execute(
-            f"SELECT COUNT(*) FROM earthquake_events WHERE {where_sql};",  # nosec B608
-            params
-        ).fetchone()
-        total_records = count_res[0] if count_res else 0
 
-        # Paginación
-        offset = (page - 1) * page_size
-        pagination_params = params + [page_size, offset]
-        
-        rows = self.conn.execute(
-            f"""
-            SELECT id, mag, place, strftime(time, '%Y-%m-%dT%H:%M:%SZ') as time, longitude, latitude, depth_km, tsunami, sig, status, mag_type 
-            FROM earthquake_events 
-            WHERE {where_sql} 
-            ORDER BY time DESC 
-            LIMIT ? OFFSET ?;
-            """,  # nosec B608
-            pagination_params
-        ).fetchall()
+        with self._lock:
+            # Conteo total (construido de forma segura con parámetros)
+            count_res = self.conn.execute(
+                f"SELECT COUNT(*) FROM earthquake_events WHERE {where_sql};",  # nosec B608
+                params
+            ).fetchone()
+            total_records = count_res[0] if count_res else 0
 
-        events = []
-        for r in rows:
-            events.append({
-                "id": r[0],
-                "mag": float(r[1]),
-                "place": r[2],
-                "time": str(r[3]),
-                "longitude": float(r[4]),
-                "latitude": float(r[5]),
-                "depth_km": float(r[6]),
-                "tsunami": int(r[7]),
-                "sig": int(r[8]),
-                "status": r[9],
-                "mag_type": r[10],
-            })
+            # Paginación
+            offset = (page - 1) * page_size
+            pagination_params = params + [page_size, offset]
 
-        return {
-            "total": total_records,
-            "page": page,
-            "page_size": page_size,
-            "total_pages": (total_records + page_size - 1) // page_size if page_size > 0 else 1,
-            "events": events,
-        }
+            rows = self.conn.execute(
+                f"""
+                SELECT id, mag, place, strftime(time, '%Y-%m-%dT%H:%M:%SZ') as time, longitude, latitude, depth_km, tsunami, sig, status, mag_type 
+                FROM earthquake_events 
+                WHERE {where_sql} 
+                ORDER BY time DESC 
+                LIMIT ? OFFSET ?;
+                """,  # nosec B608
+                pagination_params
+            ).fetchall()
+
+            events = []
+            for r in rows:
+                events.append({
+                    "id": r[0],
+                    "mag": float(r[1]) if r[1] is not None else 0.0,
+                    "place": str(r[2]),
+                    "time": str(r[3]),
+                    "longitude": float(r[4]) if r[4] is not None else 0.0,
+                    "latitude": float(r[5]) if r[5] is not None else 0.0,
+                    "depth_km": float(r[6]) if r[6] is not None else 0.0,
+                    "tsunami": int(r[7]) if r[7] is not None else 0,
+                    "sig": int(r[8]) if r[8] is not None else 0,
+                    "status": str(r[9]),
+                    "mag_type": str(r[10]),
+                })
+
+            return {
+                "total": total_records,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": (total_records + page_size - 1) // page_size if page_size > 0 else 1,
+                "events": events,
+            }
 
     def get_timeseries(self) -> List[Dict[str, Any]]:
         """Retorna la serie de tiempo horaria de sismos en las últimas 24h."""
-        rows = self.conn.execute("""
-            SELECT 
-                strftime(time, '%H:00') as hour_label,
-                COUNT(*) as count,
-                ROUND(AVG(mag), 2) as avg_mag,
-                MAX(mag) as max_mag
-            FROM earthquake_events 
-            GROUP BY hour_label 
-            ORDER BY hour_label ASC;
-        """).fetchall()
+        with self._lock:
+            # 1. Intentar ventana estricta de 24h basada en el evento más reciente
+            rows = self.conn.execute("""
+                WITH max_t AS (
+                    SELECT COALESCE(MAX(time), CURRENT_TIMESTAMP) as mt FROM earthquake_events
+                )
+                SELECT 
+                    strftime(time, '%H:00') as hour_label,
+                    COUNT(*) as count,
+                    COALESCE(ROUND(AVG(mag), 2), 0.0) as avg_mag,
+                    COALESCE(MAX(mag), 0.0) as max_mag
+                FROM earthquake_events, max_t
+                WHERE time >= max_t.mt - INTERVAL 24 HOUR
+                GROUP BY hour_label 
+                ORDER BY hour_label ASC;
+            """).fetchall()
 
-        return [
-            {"hour": r[0], "count": r[1], "avg_mag": float(r[2]), "max_mag": float(r[3])}
-            for r in rows
-        ]
+            # 2. Si no hay datos en la ventana relativa, usar agregación general por hora
+            if not rows:
+                rows = self.conn.execute("""
+                    SELECT 
+                        strftime(time, '%H:00') as hour_label,
+                        COUNT(*) as count,
+                        COALESCE(ROUND(AVG(mag), 2), 0.0) as avg_mag,
+                        COALESCE(MAX(mag), 0.0) as max_mag
+                    FROM earthquake_events 
+                    GROUP BY hour_label 
+                    ORDER BY hour_label ASC;
+                """).fetchall()
+
+            # 3. Si aún no hay eventos (base vacía), garantizar array de 24 horas para la gráfica
+            if not rows:
+                return [
+                    {"hour": f"{h:02d}:00", "count": 0, "avg_mag": 0.0, "max_mag": 0.0}
+                    for h in range(24)
+                ]
+
+            return [
+                {
+                    "hour": str(r[0]),
+                    "count": int(r[1]),
+                    "avg_mag": float(r[2]) if r[2] is not None else 0.0,
+                    "max_mag": float(r[3]) if r[3] is not None else 0.0,
+                }
+                for r in rows
+            ]
 
     def get_top_regions(self, limit: int = 5) -> List[Dict[str, Any]]:
         """Retorna las regiones con mayor frecuencia sísmica."""
-        rows = self.conn.execute("""
-            SELECT 
-                CASE 
-                    WHEN place LIKE '%CA%' THEN 'California, USA'
-                    WHEN place LIKE '%Chile%' THEN 'Chile'
-                    WHEN place LIKE '%Japan%' THEN 'Japan'
-                    WHEN place LIKE '%Alaska%' THEN 'Alaska, USA'
-                    WHEN place LIKE '%Peru%' THEN 'Peru'
-                    ELSE 'Otras Regiones'
-                END as region,
-                COUNT(*) as count,
-                ROUND(AVG(mag), 2) as avg_mag
-            FROM earthquake_events
-            GROUP BY region
-            ORDER BY count DESC
-            LIMIT ?;
-        """, [limit]).fetchall()
+        with self._lock:
+            rows = self.conn.execute("""
+                SELECT 
+                    CASE 
+                        WHEN place LIKE '%CA%' THEN 'California, USA'
+                        WHEN place LIKE '%Chile%' THEN 'Chile'
+                        WHEN place LIKE '%Japan%' THEN 'Japan'
+                        WHEN place LIKE '%Alaska%' THEN 'Alaska, USA'
+                        WHEN place LIKE '%Peru%' THEN 'Peru'
+                        ELSE 'Otras Regiones'
+                    END as region,
+                    COUNT(*) as count,
+                    COALESCE(ROUND(AVG(mag), 2), 0.0) as avg_mag
+                FROM earthquake_events
+                GROUP BY region
+                ORDER BY count DESC
+                LIMIT ?;
+            """, [limit]).fetchall()
 
-        return [
-            {"region": r[0], "count": r[1], "avg_mag": float(r[2])}
-            for r in rows
-        ]
+            return [
+                {
+                    "region": str(r[0]),
+                    "count": int(r[1]),
+                    "avg_mag": float(r[2]) if r[2] is not None else 0.0,
+                }
+                for r in rows
+            ]
 
-    def get_map_events(self, limit: int = 500) -> List[Dict[str, Any]]:
+    def get_map_events(self, hours: int = 24, limit: int = 500) -> List[Dict[str, Any]]:
         """
-        Retorna eventos prioritarios para la cartografía global (tsunamis + sismos significativos).
-        Asegura que el 100% de alertas activas de tsunami estén presentes en el mapa.
+        Retorna eventos para la cartografía global filtrados estrictamente por las últimas N horas.
+        Por defecto: últimas 24 horas.
+        Prioriza sismos con alerta activa de tsunami y sismos significativos dentro de la ventana de 24h.
         """
         with self._lock:
             cursor = self.conn.cursor()
-            rows = cursor.execute("""
+            max_time_row = cursor.execute("SELECT MAX(time) FROM earthquake_events;").fetchone()
+            if not max_time_row or not max_time_row[0]:
+                return []
+
+            ref_time = max_time_row[0]
+
+            rows = cursor.execute(f"""
                 SELECT id, mag, place, strftime(time, '%Y-%m-%dT%H:%M:%SZ') as time,
                        longitude, latitude, depth_km, tsunami, sig, status, mag_type
                 FROM earthquake_events
-                WHERE tsunami = 1 OR mag >= 2.5
-                ORDER BY tsunami DESC, mag DESC
+                WHERE time >= TIMESTAMP '{ref_time}' - (CAST(? AS INTEGER) * INTERVAL '1 HOUR')
+                ORDER BY tsunami DESC, mag DESC, time DESC
                 LIMIT ?;
-            """, [limit]).fetchall()
+            """, [hours, limit]).fetchall()
 
             return [
                 {

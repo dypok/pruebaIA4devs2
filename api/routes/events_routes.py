@@ -9,14 +9,15 @@ router = APIRouter(prefix="/api", tags=["Eventos y Analítica"])
 
 @router.get("/events/map", response_model=List[EventItem])
 def get_map_events(
+    hours: int = Query(24, ge=1, le=720, description="Ventana temporal en horas (por defecto 24h)"),
     limit: int = Query(500, ge=50, le=1000, description="Cantidad máxima de eventos para el mapa"),
     user: dict = Depends(require_viewer),
 ):
     """
-    Retorna eventos prioritarios para la visualización en el mapa cartográfico global.
-    Incluye el 100% de alertas de tsunami activas y sismos significativos (mag >= 2.5).
+    Retorna eventos prioritarios para la visualización en el mapa cartográfico global
+    filtrados estrictamente por las últimas N horas (por defecto 24 horas).
     """
-    return duckdb_service.get_map_events(limit=limit)
+    return duckdb_service.get_map_events(hours=hours, limit=limit)
 
 
 @router.get("/kpis", response_model=KpiResponse)

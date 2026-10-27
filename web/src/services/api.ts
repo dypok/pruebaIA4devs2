@@ -46,8 +46,8 @@ export async function fetchEvents(params: {
   return resp.json();
 }
 
-export async function fetchMapEvents(limit: number = 500): Promise<SeismicEvent[]> {
-  const resp = await fetch(`${API_BASE}/api/events/map?limit=${limit}`, { headers: getAuthHeaders() });
+export async function fetchMapEvents(hours: number = 24, limit: number = 500): Promise<SeismicEvent[]> {
+  const resp = await fetch(`${API_BASE}/api/events/map?hours=${hours}&limit=${limit}`, { headers: getAuthHeaders() });
   if (!resp.ok) throw new Error('Error obteniendo eventos del mapa');
   return resp.json();
 }

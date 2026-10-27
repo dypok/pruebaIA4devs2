@@ -77,30 +77,38 @@ export const AppContent: React.FC = () => {
     setPinnedCharts((prev) => prev.filter((c) => c.id !== id));
   };
 
-  // Carga inicial de datos reales
+  // Carga inicial y completa de datos reales con Promise.allSettled resiliente
   const loadInitialData = async () => {
     setDataError(null);
     try {
-      const [kpisData, eventsData, mapEventsData, timeseriesData, regionsData, reportsData] = await Promise.all([
+      const results = await Promise.allSettled([
         fetchKpis(),
         fetchEvents({ page, page_size: pageSize, min_magnitude: minMagnitude, region: searchQuery }),
-        fetchMapEvents(500),
+        fetchMapEvents(24, 500),
         fetchTimeseries(),
         fetchTopRegions(),
         fetchReports(),
       ]);
 
-      if (kpisData) setKpis(kpisData);
-      if (eventsData) {
-        setEvents(eventsData.events || []);
-        setTotalEvents(eventsData.total || 0);
+      const [kpisRes, eventsRes, mapEventsRes, timeseriesRes, regionsRes, reportsRes] = results;
+
+      if (kpisRes.status === 'fulfilled' && kpisRes.value) setKpis(kpisRes.value);
+      if (eventsRes.status === 'fulfilled' && eventsRes.value) {
+        setEvents(eventsRes.value.events || []);
+        setTotalEvents(eventsRes.value.total || 0);
       }
-      if (mapEventsData) {
-        setMapEvents(mapEventsData);
+      if (mapEventsRes.status === 'fulfilled' && mapEventsRes.value) {
+        setMapEvents(mapEventsRes.value);
       }
-      if (timeseriesData) setTimeseries(timeseriesData);
-      if (regionsData) setTopRegions(regionsData);
-      if (reportsData) setReports(reportsData);
+      if (timeseriesRes.status === 'fulfilled' && timeseriesRes.value) {
+        setTimeseries(timeseriesRes.value);
+      }
+      if (regionsRes.status === 'fulfilled' && regionsRes.value) {
+        setTopRegions(regionsRes.value);
+      }
+      if (reportsRes.status === 'fulfilled' && reportsRes.value) {
+        setReports(reportsRes.value);
+      }
     } catch (e: any) {
       console.error('Error cargando datos reales:', e);
       setDataError(e.message || 'Error consultando datos del Lakehouse');
@@ -109,11 +117,25 @@ export const AppContent: React.FC = () => {
     }
   };
 
+  // Carga inicial completa al autenticarse
   useEffect(() => {
     if (isAuthenticated) {
       loadInitialData();
     }
-  }, [isAuthenticated, page, minMagnitude, searchQuery]);
+  }, [isAuthenticated]);
+
+  // Actualización específica de tabla al cambiar filtros o paginación
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    fetchEvents({ page, page_size: pageSize, min_magnitude: minMagnitude, region: searchQuery })
+      .then((data) => {
+        if (data) {
+          setEvents(data.events || []);
+          setTotalEvents(data.total || 0);
+        }
+      })
+      .catch((err) => console.error('Error paginando eventos:', err));
+  }, [page, minMagnitude, searchQuery]);
 
   // Conexión Server-Sent Events (SSE) para tiempo real
   useEffect(() => {
@@ -201,7 +223,7 @@ export const AppContent: React.FC = () => {
                   Cartografía Sísmica Global (Leaflet Dark Matter)
                 </span>
                 <span className="text-[11px] font-mono text-slate-400">
-                  {mapEvents.length} sismos globales ({mapEvents.filter((e) => e.tsunami === 1).length} alertas tsunami activas)
+                  {mapEvents.length} sismos (últimas 24h) • {mapEvents.filter((e) => e.tsunami === 1).length} alertas tsunami activas
                 </span>
               </div>
               <SeismicMap events={mapEvents} />
