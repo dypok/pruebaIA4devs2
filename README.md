@@ -1,12 +1,12 @@
 # 🌍 SismoWatch: Plataforma de Monitoreo Sísmico Global en Tiempo Real
 
-> **Arquitectura Data Lakehouse Moderna: Apache Spark (PySpark), Almacenamiento Columnar Parquet en Capa Gold, Motor Vectorizado DuckDB, Apache Airflow, Inteligencia Artificial Local (Qwen 2.5:2b con Ollama) y Frontend React + Vite.**
+> **Arquitectura Data Lakehouse Moderna: MinIO (S3 Object Storage), Apache Spark (PySpark), Almacenamiento Columnar Parquet en Capa Gold, Motor Vectorizado DuckDB, Apache Airflow, Inteligencia Artificial Local (Qwen 2.5:2b con Ollama) y Frontend React + Vite.**
 
 ---
 
 ## 📋 Tabla de Contenidos
 1. [Propósito del Negocio y Arquitectura Lakehouse](#-propósito-del-negocio-y-arquitectura-lakehouse)
-2. [El Poder de Spark + Parquet + DuckDB](#-el-poder-de-spark--parquet--duckdb)
+2. [El Poder de MinIO + Spark + Parquet + DuckDB](#-el-poder-de-minio--spark--parquet--duckdb)
 3. [Puesta en Marcha (Un solo comando)](#-puesta-en-marcha-un-solo-comando)
 4. [Estrategia de Calidad de Datos y Alertas](#-estrategia-de-calidad-de-datos-y-alertas)
 5. [Seguridad y Mínimo Privilegio](#-seguridad-y-mínimo-privilegio)
@@ -21,7 +21,7 @@
 ## 🎯 Propósito del Negocio y Arquitectura Lakehouse
 
 SuperApp requiere monitorear la sismicidad global para priorizar decisiones de riesgo y contingencia operativa en sus redes de transporte, distribución y logística.
-**SismoWatch** toma el feed público de la **USGS (United States Geological Survey)** y lo transforma mediante una arquitectura **Data Lakehouse** de alto rendimiento:
+**SismoWatch** toma el feed público de la **USGS (United States Geological Survey)** y lo transforma mediante una arquitectura **Data Lakehouse** de nivel empresarial:
 
 ```
 [ USGS Feed API ]
@@ -29,15 +29,15 @@ SuperApp requiere monitorear la sismicidad global para priorizar decisiones de r
        ▼ (Cada 5 min / Micro-lote con try-catch)
 [ Apache Airflow Ingestion DAG ]
        │
-       ▼ (JSONB / GeoJSON crudo)
-[ Landing Layer: data/raw/ ]
+       ▼ (Escribe GeoJSON inmutable vía S3)
+[ MinIO S3 Object Storage: sismowatch-lake/raw/ ]
        │
        ▼ (PySpark Transformation Job)
 [ Apache Spark: Limpieza, tipado y validación de calidad ]
        │
        ├─► (Si hay registros inválidos) ──► [ Alerta Inmediata en Airflow ]
        ▼ (Escritura columnar particionada por fecha)
-[ Gold Layer: data/gold/earthquake_events/ (Archivos Parquet) ]
+[ MinIO S3 Object Storage: sismowatch-lake/gold/ (Archivos Parquet) ]
        │
        ▼ (Lectura directa vectorizada sin bloqueos con read_parquet)
 [ Motor Analítico DuckDB (FastAPI) ] ◄──► [ Chatbot Qwen 2.5:2b (Ollama) ]
@@ -50,17 +50,18 @@ SuperApp requiere monitorear la sismicidad global para priorizar decisiones de r
 
 ---
 
-## ⚡ El Poder de Spark + Parquet + DuckDB
+## ⚡ El Poder de MinIO + Spark + Parquet + DuckDB
 
-1. **Apache Spark en la Transformación:** Procesa y aplana los payloads GeoJSON masivos de USGS, aplica reglas de calidad y genera archivos **Apache Parquet** comprimidos con Snappy, particionados por año y mes (`year=YYYY/month=MM/`).
-2. **Gold Layer en Parquet:** Formato columnar óptimo que almacena metadatos y estadísticas de columnas (mínimos, máximos) y reduce el espacio en disco en más de un 80%.
+1. **MinIO (S3 Object Storage):** Almacenamiento centralizado compatible con Amazon S3. Administra el bucket `sismowatch-lake` separando el dato crudo (`raw/`) del dato procesado (`gold/`). Dispone de consola web en el puerto `9001`.
+2. **Apache Spark en la Transformación:** Lee desde MinIO, aísla y alana los payloads GeoJSON masivos de USGS, aplica reglas de calidad con Pandera y genera archivos **Apache Parquet** comprimidos con Snappy en `sismowatch-lake/gold/earthquake_events/`.
 3. **DuckDB como Motor Analítico y de Chatbot:** 
-   - El backend de FastAPI instancia DuckDB en memoria.
-   - DuckDB monta una vista sobre los Parquets:
+   - El backend de FastAPI utiliza DuckDB con la extensión `httpfs` conectada a MinIO (`http://minio:9000`).
+   - DuckDB monta la vista:
      ```sql
-     CREATE VIEW earthquake_events AS SELECT * FROM read_parquet('data/gold/earthquake_events/**/*.parquet');
+     CREATE VIEW earthquake_events AS 
+     SELECT * FROM read_parquet('s3://sismowatch-lake/gold/earthquake_events/**/*.parquet');
      ```
-   - Al ser consultas de lectura sobre archivos Parquet, **no existe riesgo de bloqueos por concurrencia** (*database lock*).
+   - **Cero bloqueos de concurrencia** (*database lock*).
    - El **Chatbot (Qwen 2.5:2b)** traduce las preguntas en español a consultas DuckDB SQL que se ejecutan en menos de 5 milisegundos.
 
 ---
@@ -78,6 +79,7 @@ docker compose up -d
 | :--- | :--- | :--- |
 | **Plataforma Web** | [http://localhost:3000](http://localhost:3000) | `admin` / `AdminSismoWatch2026!`<br/>`viewer` / `ViewerSismoWatch2026!` |
 | **Documentación API (Swagger)** | [http://localhost:8000/docs](http://localhost:8000/docs) | Autenticación JWT en `/auth/login` |
+| **Consola MinIO (S3 Lake)** | [http://localhost:9001](http://localhost:9001) | `minioadmin` / `minioadmin2026!` |
 | **Airflow Webserver** | [http://localhost:8080](http://localhost:8080) | `admin` / `admin_sismowatch_airflow_2026!` |
 | **Inferencia Ollama** | [http://localhost:11434](http://localhost:11434) | Modelo: `qwen2.5:2b` |
 
@@ -100,7 +102,7 @@ docker compose up -d
     ```sql
     SELECT place, mag, time, depth_km FROM earthquake_events ORDER BY mag DESC LIMIT 3;
     ```
-  - DuckDB lee los Parquet y ejecuta la consulta instantáneamente.
+  - DuckDB lee los Parquet de MinIO y ejecuta la consulta instantáneamente.
   - El chatbot redacta la respuesta en lenguaje natural y muestra la consulta ejecutada en la interfaz.
 
 ---
