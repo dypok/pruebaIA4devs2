@@ -1,5 +1,7 @@
 # 🌍 SismoWatch: Plataforma de Monitoreo Sísmico Global en Tiempo Real
 
+githublink https://github.com/dypok/pruebaIA4devs2.git
+
 > **Arquitectura Data Lakehouse Moderna: MinIO (S3 Object Storage), Polars (Motor Vectorizado en Rust), Arquitectura Medallion (Bronze ➔ Silver ➔ Gold), Motor Vectorizado DuckDB, Apache Airflow, Inteligencia Artificial Local (Qwen 2.5:2b con Ollama) y Frontend React + Vite con Gráficos Dinámicos Fijables.**
 
 ---
@@ -77,4 +79,3 @@ docker compose up -d
 - **Cero Badges:** Se eliminaron las etiquetas tipo píldora de colores; se usan indicadores tipográficos limpios y puntos discretos de estado (`status dots`).
 - **Cero Exceso de Cards:** Barra unificada de métricas (`MetricRibbon`) y paneles continuos con diseño profesional (estilo Datadog / Stripe).
 - **Dashboard Dinámico:** Mapa Leaflet, gráficos fijos y sección de gráficos analíticos interactivos fijados desde el Chatbot.
-# pruebaIA4devs2
