@@ -24,9 +24,15 @@ export const SeismicMap: React.FC<SeismicMapProps> = ({ events, onSelectEvent })
       maxZoom: 12,
     });
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    const cartoApiKey = import.meta.env.VITE_CARTO_API_KEY || 'cb1_4vzm_1_9ed6914f236161abe35901e0';
+    const tileUrl = cartoApiKey
+      ? `https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=${encodeURIComponent(cartoApiKey)}`
+      : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+
+    L.tileLayer(tileUrl, {
       attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; USGS',
       maxZoom: 19,
+      subdomains: 'abcd',
     }).addTo(map);
 
     markersLayerRef.current = L.layerGroup().addTo(map);

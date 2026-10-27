@@ -68,7 +68,8 @@ class ChartSuggestion(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    prompt: str = Field(..., example="¿Cuáles son los 5 sismos más fuertes hoy?")
+    prompt: Optional[str] = None
+    query: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
