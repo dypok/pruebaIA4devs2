@@ -135,6 +135,12 @@ export const SeismicMap: React.FC<SeismicMapProps> = ({ events, onSelectEvent })
     <div className="relative w-full h-[460px] rounded-lg overflow-hidden border border-slate-800">
       <div ref={mapContainerRef} className="w-full h-full z-0 bg-slate-950" />
       
+      {/* Indicador de Ventana Temporal (24 Horas) */}
+      <div className="absolute top-3 right-3 z-10 bg-slate-900/90 backdrop-blur border border-slate-800 rounded px-2.5 py-1 text-[10px] font-mono text-sky-400 flex items-center space-x-1.5 shadow-sm">
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+        <span className="font-semibold uppercase tracking-wider">Monitoreo 24h</span>
+      </div>
+
       {/* Leyenda sismológica sutil (sin badges) */}
       <div className="absolute bottom-3 left-3 z-10 bg-slate-900/90 backdrop-blur border border-slate-800 rounded px-3 py-2 text-[11px] font-mono text-slate-300 flex items-center space-x-4">
         <span className="text-slate-400 font-sans font-semibold">Magnitud:</span>
