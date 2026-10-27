@@ -1,4 +1,4 @@
-pyspark==3.5.1
+polars==1.8.2
 duckdb==1.0.0
 numpy<2.0.0
 pandera==0.19.3

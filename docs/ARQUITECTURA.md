@@ -1,4 +1,4 @@
-# Documento de Arquitectura de Datos: Plataforma SismoWatch (Data Lakehouse con MinIO, Spark, Parquet, DuckDB y Dashboards Dinámicos con IA)
+# Documento de Arquitectura de Datos: Plataforma SismoWatch (Data Lakehouse con MinIO, Polars, Parquet, DuckDB y Dashboards Dinámicos con IA)
 
 ## 1. Propósito de la Arquitectura
 
@@ -21,7 +21,7 @@ SuperApp requiere monitorear la sismicidad global en tiempo casi real para antic
 ```mermaid
 flowchart LR
     USGS["API USGS"] -->|Ingesta cruda| Bronze["BRONZE (MinIO S3)<br/>GeoJSON inmutable"]
-    Bronze -->|Apache Spark: Desanidar + Tipar| Silver["SILVER (MinIO Parquet)<br/>VALID + INVALID con motivos"]
+    Bronze -->|Polars Engine: Desanidar + Tipar| Silver["SILVER (MinIO Parquet)<br/>VALID + INVALID con motivos"]
     
     Silver -.->|Si hay INVALID| AlertaAirflow["⚠️ Alerta Inmediata<br/>en Airflow"]
     Silver -->|Filtro: solo VALID + Enriquecimiento| Gold["GOLD (MinIO Parquet)<br/>Datos certificados + Agregaciones"]
@@ -57,8 +57,8 @@ flowchart TD
         MINIO_GOLD[("GOLD: sismowatch-lake/gold/<br/>Parquet certificado (solo VALID)")]
     end
 
-    subgraph CapaProcesamiento["4. Procesamiento Distribuido (Apache Spark)"]
-        SPARK_JOB["Apache Spark (PySpark)<br/>• Lectura de Bronze S3A<br/>• Desanidado, tipado y Pandera<br/>• Escritura a Silver Parquet<br/>• Promoción a Gold Parquet"]
+    subgraph CapaProcesamiento["4. Procesamiento Vectorizado (Polars Engine en Rust)"]
+        POLARS_JOB["Polars DataFrame Engine<br/>• Desanidado y tipado con Apache Arrow<br/>• Validación con Pandera<br/>• Escritura directa de Parquet Snappy en BytesIO<br/>• Cero sobrecarga de JVM o Java"]
         ANOMALY_ML["Detección de Anomalías<br/>(IsolationForest & Z-score)"]
     end
 
@@ -96,11 +96,41 @@ flowchart TD
     DAG_INGEST -->|Escribe GeoJSON crudo| MINIO_RAW
     DAG_INGEST -->|Trigger| DAG_TRANSFORM
 
-    MINIO_RAW -->|Lee con S3A| SPARK_JOB
-    SPARK_JOB -->|Escribe Parquets desanidados| MINIO_SILVER
-    SPARK_JOB -.->|Si hay registros INVALID| ALERTA_TASK
-    SPARK_JOB -->|Promueve conformes| MINIO_GOLD
-    SPARK_JOB -->|Registra métricas| POSTGRES_DB
+    MINIO_RAW -->|Lectura en Memoria| POLARS_JOB
+    POLARS_JOB -->|Escribe Parquets desanidados| MINIO_SILVER
+    POLARS_JOB -.->|Si hay registros INVALID| ALERTA_TASK
+    POLARS_JOB -->|Promueve conformes| MINIO_GOLD
+    POLARS_JOB -->|Registra métricas| POSTGRES_DB
+
+    MINIO_GOLD --> ANOMALY_ML
+    ANOMALY_ML -->|Alertas| POSTGRES_DB
+
+    MINIO_GOLD -->|S3 read_parquet() vía httpfs| DUCKDB_ENGINE
+    DUCKDB_ENGINE <--> FASTAPI_CORE
+
+    FASTAPI_CORE <--> CHAT_SERVICE
+    CHAT_SERVICE <-->|Text-to-SQL| MODEL_QWEN
+    CHAT_SERVICE <-->|Ejecuta SQL seguro| DUCKDB_ENGINE
+
+    FASTAPI_CORE --> METRIC_RIBBON
+    FASTAPI_CORE --> LEAFLET_MAP
+    FASTAPI_CORE --> PINNED_CHARTS
+    FASTAPI_CORE --> SSE_LIVE
+    FASTAPI_CORE <--> CHATBOT_WIDGET
+    CHATBOT_WIDGET -.->|📌 Fijar gráfico personalizado| PINNED_CHARTS
+```
+
+---
+
+## 4. Decisión de Ingeniería: Polars vs Apache Spark
+
+| Criterio | Apache Spark (PySpark) | Polars (Motor Vectorizado en Rust) | Decisión en SismoWatch |
+| :--- | :--- | :--- | :--- |
+| **Volumen de Datos** | Petabytes / Terabytes en clústeres distribuidos. | Gigabytes a Terabytes en una sola máquina (multihilo). | **Polars:** El feed sísmico es de micro-lotes (~miles de registros). Spark es *overkill*. |
+| **Tiempo de Inicio (Startup)** | 5-15 segundos para levantar JVM y SparkContext. | < 1 milisegundo (Rust nativo). | **Polars:** Tareas de Airflow terminan en < 1 segundo. |
+| **Consumo de Memoria** | ~500MB-1GB de memoria base por tarea de Airflow. | ~20-50MB de memoria en RAM. | **Polars:** 90% menos consumo de RAM. |
+| **Huella del Contenedor** | Requiere Java 17 headless (~500MB adicionales en Docker). | Solo biblioteca Python en binario Rust compilado. | **Polars:** Imagen Docker más liviana y despliegue veloz. |
+| **Escritura Parquet** | Requiere conectores Hadoop-AWS S3A y credenciales complejas. | `df.write_parquet(buffer, compression='snappy')` en RAM directa. | **Polars:** Escritura directa a MinIO con `boto3`. |
 
     MINIO_GOLD --> ANOMALY_ML
     ANOMALY_ML -->|Alertas| POSTGRES_DB

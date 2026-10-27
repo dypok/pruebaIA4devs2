@@ -2,17 +2,13 @@ FROM apache/airflow:2.9.3-python3.11
 
 USER root
 
-# Instalar Java 17 headless para Apache Spark
+# Herramientas de sistema ligeras (sin Java ni JVM)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-       default-jre-headless \
        procps \
        curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
-
-ENV JAVA_HOME=/usr/lib/jvm/default-java
-ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
 USER airflow
 

@@ -7,7 +7,7 @@ Para evitar que una vulnerabilidad en una capa comprometa la totalidad del siste
 ```mermaid
 flowchart LR
     IngestRole["user_ingestion<br/>(Airflow Ingestion)"]
-    TransformRole["user_transform<br/>(Airflow Spark Task)"]
+    TransformRole["user_transform<br/>(Airflow Polars Task)"]
     PlatformRole["user_platform<br/>(FastAPI Backend)"]
 
     RawSchema[("raw.*")]

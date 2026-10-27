@@ -146,7 +146,7 @@ export const PipelineStatus: React.FC = () => {
           </div>
 
           <p className="text-xs text-slate-400 mb-4">
-            Los siguientes registros violaron reglas de Pandera durante la transformación en Apache Spark.
+            Los siguientes registros violaron reglas de Pandera durante la transformación en Polars (Motor Vectorizado en Rust).
             Se preservaron en la capa Silver con motivo de rechazo y activaron la alerta en Airflow para corrección del operador.
           </p>
 

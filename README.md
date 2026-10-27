@@ -1,13 +1,13 @@
 # 🌍 SismoWatch: Plataforma de Monitoreo Sísmico Global en Tiempo Real
 
-> **Arquitectura Data Lakehouse Moderna: MinIO (S3 Object Storage), Apache Spark (PySpark), Arquitectura Medallion (Bronze ➔ Silver ➔ Gold), Motor Vectorizado DuckDB, Apache Airflow, Inteligencia Artificial Local (Qwen 2.5:2b con Ollama) y Frontend React + Vite con Gráficos Dinámicos Fijables.**
+> **Arquitectura Data Lakehouse Moderna: MinIO (S3 Object Storage), Polars (Motor Vectorizado en Rust), Arquitectura Medallion (Bronze ➔ Silver ➔ Gold), Motor Vectorizado DuckDB, Apache Airflow, Inteligencia Artificial Local (Qwen 2.5:2b con Ollama) y Frontend React + Vite con Gráficos Dinámicos Fijables.**
 
 ---
 
 ## 📋 Tabla de Contenidos
 1. [Flujo de Datos Medallion (Bronze ➔ Silver ➔ Gold)](#-flujo-de-datos-medallion-bronze--silver--gold)
 2. [Arquitectura General Lakehouse](#-arquitectura-general-lakehouse)
-3. [El Rol de MinIO + Spark + DuckDB](#-el-rol-de-minio--spark--duckdb)
+3. [El Rol de MinIO + Polars + DuckDB](#-el-rol-de-minio--polars--duckdb)
 4. [Chatbot IA y Gráficos Dinámicos Fijables al Dashboard](#-chatbot-ia-y-gráficos-dinámicos-fijables-al-dashboard)
 5. [Puesta en Marcha (Un solo comando)](#-puesta-en-marcha-un-solo-comando)
 6. [Estrategia de Calidad de Datos y Alertas](#-estrategia-de-calidad-de-datos-y-alertas)
@@ -23,7 +23,7 @@
 ```mermaid
 flowchart LR
     USGS["API USGS"] -->|Ingesta cruda| Bronze["BRONZE (MinIO S3)<br/>GeoJSON inmutable"]
-    Bronze -->|Apache Spark: Desanidar + Tipar| Silver["SILVER (MinIO Parquet)<br/>VALID + INVALID con motivos"]
+    Bronze -->|Polars: Desanidar + Tipar| Silver["SILVER (MinIO Parquet)<br/>VALID + INVALID con motivos"]
     
     Silver -.->|Si hay INVALID| AlertaAirflow["⚠️ Alerta Inmediata<br/>en Airflow"]
     Silver -->|Filtro: solo VALID + Enriquecimiento| Gold["GOLD (MinIO Parquet)<br/>Datos certificados + Agregaciones"]
@@ -67,7 +67,7 @@ docker compose up -d
 | **Plataforma Web** | [http://localhost:3000](http://localhost:3000) | `admin` / `AdminSismoWatch2026!`<br/>`viewer` / `ViewerSismoWatch2026!` |
 | **Documentación API (Swagger)** | [http://localhost:8000/docs](http://localhost:8000/docs) | Autenticación JWT en `/auth/login` |
 | **Consola MinIO (S3 Lake)** | [http://localhost:9001](http://localhost:9001) | `minioadmin` / `minioadmin2026!` |
-| **Airflow Webserver** | [http://localhost:8080](http://localhost:8080) | `admin` / `admin_sismowatch_airflow_2026!` |
+| **Airflow Webserver** | [http://localhost:8085](http://localhost:8085) | `admin` / `admin_sismowatch_airflow_2026!` |
 | **Inferencia Ollama** | [http://localhost:11434](http://localhost:11434) | Modelo: `qwen2.5:2b` |
 
 ---

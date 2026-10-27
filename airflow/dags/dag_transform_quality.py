@@ -1,7 +1,7 @@
 """
-### DAG de Transformación y Calidad (Apache Spark + Pandera + MinIO)
+### DAG de Transformación y Calidad (Polars + Pandera + MinIO)
 - **Activación:** Disparado automáticamente al finalizar la ingesta.
-- **Procesamiento:** Lee el dato crudo de MinIO Bronze, desanida y normaliza.
+- **Procesamiento:** Lee el dato crudo de MinIO Bronze, desanida y normaliza mediante Polars.
 - **Control de Calidad:** Aplica validaciones bloqueantes con Pandera.
 - **Capa Silver:** Guarda todos los registros con su estado (`VALID` o `INVALID` con motivo).
 - **Alerta Inmediata en Airflow:** Si existen registros `INVALID`, notifica de inmediato al operador.
@@ -20,12 +20,12 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 try:
     from include.minio_client import download_json, list_objects
-    from include.spark_transform import process_features_to_layers, write_parquet_to_minio
+    from include.polars_transform import process_features_to_layers, write_parquet_to_minio
     from include.anomaly import detect_seismic_anomalies
     from include.alerts import notify_invalid_records, on_failure_callback
 except ImportError:
     from airflow.include.minio_client import download_json, list_objects
-    from airflow.include.spark_transform import process_features_to_layers, write_parquet_to_minio
+    from airflow.include.polars_transform import process_features_to_layers, write_parquet_to_minio
     from airflow.include.anomaly import detect_seismic_anomalies
     from airflow.include.alerts import notify_invalid_records, on_failure_callback
 
@@ -67,7 +67,7 @@ def transform_and_validate_task(**context):
         return
 
     features = payload.get("features", [])
-    print(f"⚙️ Procesando {len(features)} eventos sísmicos con Spark y Pandera...")
+    print(f"⚙️ Procesando {len(features)} eventos sísmicos con Polars y Pandera...")
 
     valid_records, invalid_records, score, summary = process_features_to_layers(features)
     all_records = valid_records + invalid_records
@@ -95,17 +95,17 @@ def transform_and_validate_task(**context):
 with DAG(
     dag_id="dag_transform_quality",
     default_args=default_args,
-    description="Transformación con Spark, validación con Pandera y particionado Parquet en MinIO",
+    description="Transformación con Polars, validación con Pandera y particionado Parquet en MinIO",
     schedule_interval=None,  # Disparado por dag_usgs_ingestion
     start_date=datetime(2026, 1, 1),
     catchup=False,
     max_active_runs=1,
-    tags=["sismowatch", "spark", "quality", "parquet", "minio"],
+    tags=["sismowatch", "polars", "quality", "parquet", "minio"],
     doc_md=__doc__,
 ) as dag:
 
     process_task = PythonOperator(
-        task_id="spark_transform_and_quality_check",
+        task_id="polars_transform_and_quality_check",
         python_callable=transform_and_validate_task,
         provide_context=True,
     )
