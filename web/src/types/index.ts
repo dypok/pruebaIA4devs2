@@ -43,6 +43,17 @@ export interface ChartSuggestion {
   secondary_y_key?: string;
 }
 
+export interface IntentCatalogMetadata {
+  intent: 'conversational' | 'knowledge' | 'status' | 'analytics';
+  subtype: string;
+  confidence: number;
+  target_location?: string;
+  time_frame?: string;
+  reasoning?: string;
+  step1_latency_ms: number;
+  total_latency_ms: number;
+}
+
 export interface ChatResponse {
   intent?: 'conversational' | 'knowledge' | 'status' | 'analytics';
   reply: string;
@@ -50,6 +61,7 @@ export interface ChatResponse {
   data?: any[];
   chart_suggestion?: ChartSuggestion;
   row_count?: number;
+  catalog?: IntentCatalogMetadata;
 }
 
 export interface PinnedChart {

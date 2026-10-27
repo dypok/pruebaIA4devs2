@@ -68,6 +68,17 @@ class ChartSuggestion(BaseModel):
     secondary_y_key: Optional[str] = None
 
 
+class IntentCatalogMetadata(BaseModel):
+    intent: str
+    subtype: str
+    confidence: float
+    target_location: Optional[str] = None
+    time_frame: Optional[str] = None
+    reasoning: Optional[str] = None
+    step1_latency_ms: float = 0.0
+    total_latency_ms: float = 0.0
+
+
 class ChatRequest(BaseModel):
     prompt: Optional[str] = None
     query: Optional[str] = None
@@ -80,3 +91,4 @@ class ChatResponse(BaseModel):
     data: List[Dict[str, Any]] = []
     chart_suggestion: Optional[ChartSuggestion] = None
     row_count: int = 0
+    catalog: Optional[IntentCatalogMetadata] = None

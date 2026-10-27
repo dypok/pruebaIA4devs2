@@ -1,10 +1,12 @@
 import re
 import json
+import time
 import logging
 from typing import Dict, Any, Optional, List
 import requests
 from config import OLLAMA_BASE_URL, OLLAMA_MODEL
 from duckdb_service import duckdb_service
+from schemas import IntentCatalogMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -122,112 +124,206 @@ def _normalize_text(text: str) -> str:
 
 class CognitiveAgent:
     """
-    Agente Cognitivo de SismoWatch con inferencia adaptativa de intenciones:
-    - CONVERSATIONAL: Saludos, presentación, cortesía y ayuda.
-    - KNOWLEDGE: Explicaciones científicas, sismología, placas y protocolos de prevención.
-    - STATUS: Telemetría y estado de operación de SismoWatch.
-    - ANALYTICS: Consultas cuantitativas sobre la base DuckDB con generación segura de gráficos.
+    Agente Cognitivo de 2 Fases con Inferencia Pura de Qwen 2.5:2b:
+    - FASE 1: Identificación de intención, extracción de entidades y catalogación estructurada en JSON.
+    - FASE 2: Ejecución especializada guiada por el catálogo sobre DuckDB Lakehouse o base de conocimiento.
     """
 
     def __init__(self):
         self.ollama_url = f"{OLLAMA_BASE_URL}/api/generate"
         self.model = OLLAMA_MODEL
 
-    def classify_intent(self, prompt: str) -> str:
+    # ==========================================================================
+    # FASE 1: CLASIFICACIÓN Y CATALOGACIÓN PREVIA (LLM CON QWEN 2.5:2b)
+    # ==========================================================================
+
+    def classify_and_catalog(self, prompt: str) -> IntentCatalogMetadata:
         """
-        Clasifica la intención del mensaje de forma robusta y determinista.
+        Fase 1: Analiza la pregunta con Qwen 2.5:2b y produce un catálogo formal en JSON
+        con intención principal, subtipo analítico/científico, entidades y confianza.
         """
+        t0 = time.perf_counter()
+        clean_prompt = prompt.strip()
+
+        sys_prompt = (
+            "Eres el módulo de Clasificación y Catalogación Cognitiva de SismoWatch.\n"
+            "Analiza la pregunta del usuario y responde ÚNICAMENTE con un objeto JSON válido con este esquema exacto:\n"
+            "{\n"
+            '  "intent": "ANALYTICS" | "KNOWLEDGE" | "STATUS" | "CONVERSATIONAL",\n'
+            '  "subtype": "latest_event" | "strongest_events" | "regional_activity" | "tsunami_alerts" | "aggregation" | "science_concept" | "disaster_prevention" | "platform_telemetry" | "greeting" | "help_capabilities" | "gratitude",\n'
+            '  "target_location": string o null,\n'
+            '  "time_frame": "latest" | "24h" | "historical" | null,\n'
+            '  "confidence": float entre 0.0 y 1.0,\n'
+            '  "reasoning": string de 3 a 5 palabras\n'
+            "}\n"
+            "Reglas estrictas:\n"
+            "1. Preguntas sobre dónde, cuándo o cuál fue el último/más reciente sismo o temblor son SIEMPRE intent=\"ANALYTICS\" y subtype=\"latest_event\".\n"
+            "2. Preguntas sobre los sismos más fuertes o de mayor magnitud son intent=\"ANALYTICS\" y subtype=\"strongest_events\".\n"
+            "3. Preguntas sobre sismos en una región/país (ej. Chile, California) son intent=\"ANALYTICS\" y subtype=\"regional_activity\".\n"
+            "4. Preguntas conceptuales teóricas (qué es la falla de San Andrés, qué es la escala Richter) son intent=\"KNOWLEDGE\".\n"
+            "5. Saludos o preguntas de cortesía son intent=\"CONVERSATIONAL\".\n"
+            "Devuelve EXCLUSIVAMENTE el objeto JSON sin markdown ni texto adicional."
+        )
+
+        catalog_data = None
+        try:
+            payload = {
+                "model": self.model,
+                "prompt": f"{sys_prompt}\nPregunta: \"{clean_prompt}\"\nJSON:",
+                "stream": False,
+                "format": "json",
+                "options": {"temperature": 0.0, "num_predict": 55}
+            }
+            resp = requests.post(self.ollama_url, json=payload, timeout=20)
+            if resp.status_code == 200:
+                raw_json = resp.json().get("response", "").strip()
+                clean = re.sub(r"^```(?:json)?\s*", "", raw_json, flags=re.IGNORECASE)
+                clean = re.sub(r"\s*```$", "", clean).strip()
+                match = re.search(r"\{.*\}", clean, re.DOTALL)
+                if match:
+                    catalog_data = json.loads(match.group(0))
+        except Exception as e:
+            logger.warning(f"Error en Fase 1 de catalogación LLM ({e}); activando catalogador de respaldo.")
+
+        step1_latency = round((time.perf_counter() - t0) * 1000, 2)
+
+        # Si el modelo respondió un JSON válido, validarlo y normalizarlo
+        if catalog_data and isinstance(catalog_data, dict) and "intent" in catalog_data:
+            intent_raw = str(catalog_data.get("intent", "ANALYTICS")).upper()
+            intent_norm = intent_raw.lower()
+            if intent_norm not in ["conversational", "status", "knowledge", "analytics"]:
+                intent_norm = "analytics"
+
+            subtype_norm = str(catalog_data.get("subtype", "latest_event" if intent_norm == "analytics" else "general")).lower()
+            confidence_val = float(catalog_data.get("confidence", 0.95))
+            target_loc = catalog_data.get("target_location")
+            if target_loc and target_loc.lower() == "null":
+                target_loc = None
+            time_fr = catalog_data.get("time_frame")
+            if time_fr and time_fr.lower() == "null":
+                time_fr = None
+            reasoning_str = catalog_data.get("reasoning", "Clasificado por Qwen 2.5:2b")
+
+            return IntentCatalogMetadata(
+                intent=intent_norm,
+                subtype=subtype_norm,
+                confidence=round(confidence_val, 2),
+                target_location=target_loc,
+                time_frame=time_fr,
+                reasoning=reasoning_str,
+                step1_latency_ms=step1_latency,
+                total_latency_ms=0.0
+            )
+
+        # Fallback determinista si el LLM no estuvo disponible
+        return self._heuristic_fallback_catalog(clean_prompt, step1_latency)
+
+    def _heuristic_fallback_catalog(self, prompt: str, latency_ms: float) -> IntentCatalogMetadata:
+        """Catalogador heurístico resiliente de respaldo para garantizar cero fallos de red."""
         p = _normalize_text(prompt)
 
-        # 1. Reglas conversacionales rápidas (saludos, despedidas, cortesía)
-        greetings = {"hola", "buenas", "buen dia", "buenos dias", "buenas tardes", "buenas noches", "hey", "hello", "hi", "saludos"}
-        help_phrases = {"que puedes hacer", "que haces", "ayuda", "help", "como funciona", "opciones", "quien eres"}
-        thanks_phrases = {"gracias", "muchas gracias", "ok", "vale", "listo", "perfecto", "adios", "chao", "hasta luego"}
+        # Conversacional
+        if any(w in p for w in ["hola", "buenas", "buen dia", "hey", "saludos"]):
+            return IntentCatalogMetadata(
+                intent="conversational",
+                subtype="greeting",
+                confidence=0.99,
+                reasoning="Saludo detectado",
+                step1_latency_ms=latency_ms
+            )
+        if any(w in p for w in ["que puedes hacer", "ayuda", "quien eres"]):
+            return IntentCatalogMetadata(
+                intent="conversational",
+                subtype="help_capabilities",
+                confidence=0.98,
+                reasoning="Solicitud de capacidades del asistente",
+                step1_latency_ms=latency_ms
+            )
 
-        if p in greetings or any(p.startswith(g + " ") for g in greetings):
-            return "CONVERSATIONAL"
-        if p in help_phrases or "puedes hacer" in p or "como te uso" in p:
-            return "CONVERSATIONAL"
-        if p in thanks_phrases:
-            return "CONVERSATIONAL"
+        # Telemetría
+        if any(w in p for w in ["total de sismos", "estado del sistema", "pipeline status", "salud"]):
+            return IntentCatalogMetadata(
+                intent="status",
+                subtype="platform_telemetry",
+                confidence=0.95,
+                reasoning="Consulta de telemetría y salud de plataforma",
+                step1_latency_ms=latency_ms
+            )
 
-        # 2. Señales analíticas prioritarias (preguntas sobre datos o eventos reales)
-        seismic_terms = [
-            "sismo", "sismos", "temblor", "temblores", "terremoto", "terremotos",
-            "magnitud", "magnitudes", "profundidad", "tsunami", "tsunamis",
-            "movimiento telurico"
-        ]
-        analytics_indicators = [
-            "donde", "cuando", "cual", "cuales", "cuanto", "cuantos", "cuantas",
-            "ultimo", "ultima", "ultimos", "ultimas", "reciente", "recientes",
-            "fuerte", "fuertes", "mayor", "mayores", "maximo", "maxima", "max",
-            "hoy", "ayer", "semana", "mes", "24h", "hora", "minuto",
-            "ranking", "top", "tabla", "grafica", "grafico", "promedio",
-            "chile", "japon", "japan", "california", "alaska", "panama", "peru", "mexico",
-            "hawaii", "indonesia", "colombia", "ecuador", "texas", "utah", "nevada", "oklahoma",
-            "mostrar", "lista", "listar", "ver", "dame", "buscar", "filtra", "filtrar",
-            "zona", "zonas", "region", "regiones", "pais", "paises"
-        ]
+        # Último sismo
+        if any(w in p for w in ["ultimo", "reciente"]) and any(w in p for w in ["sismo", "temblor", "terremoto", "donde", "cuando", "fue"]):
+            return IntentCatalogMetadata(
+                intent="analytics",
+                subtype="latest_event",
+                time_frame="latest",
+                confidence=0.99,
+                reasoning="Consulta de ocurrencia del sismo más reciente",
+                step1_latency_ms=latency_ms
+            )
 
-        has_seismic = any(term in p for term in seismic_terms)
-        has_analytics_ind = any(ind in p for ind in analytics_indicators)
+        # Más fuertes
+        if any(w in p for w in ["fuerte", "mayor magnitud", "mas potente", "maxima magnitud"]):
+            return IntentCatalogMetadata(
+                intent="analytics",
+                subtype="strongest_events",
+                confidence=0.98,
+                reasoning="Ranking de sismos por energía liberada",
+                step1_latency_ms=latency_ms
+            )
 
-        # Consultas directas sobre el último evento (ej. "donde fue el ultimo sismo", "ultimo temblor", "ultimo evento")
-        if any(w in p for w in ["ultimo", "reciente"]) and (has_seismic or any(w in p for w in ["donde", "cuando", "fue", "evento"])):
-            return "ANALYTICS"
+        # Conceptos teóricos
+        if any(p.startswith(pref) for pref in ["que es", "por que tiembla", "que hacer en"]):
+            return IntentCatalogMetadata(
+                intent="knowledge",
+                subtype="science_concept" if "que es" in p else "disaster_prevention",
+                confidence=0.96,
+                reasoning="Explicación teórica de sismología o prevención",
+                step1_latency_ms=latency_ms
+            )
 
-        # Término sísmico + indicador de consulta (ej. "sismos en chile", "sismo mas fuerte")
-        if has_seismic and has_analytics_ind:
-            # Excepción: preguntas teóricas conceptuales puras
-            conceptual_prefixes = ["que es", "que significa", "como se define", "por que ocurre", "por que tiembla", "que hacer en", "medidas de", "mochila de"]
-            if any(p.startswith(pref) for pref in conceptual_prefixes) and not any(w in p for w in ["donde", "cuando", "ultimo", "reciente", "hoy", "ayer", "fuerte", "tabla", "grafica"]):
-                return "KNOWLEDGE"
-            return "ANALYTICS"
+        # Búsqueda geográfica
+        matched_loc = None
+        for loc in ["chile", "japon", "california", "alaska", "hawaii", "mexico", "peru", "panama", "nevada"]:
+            if loc in p:
+                matched_loc = loc.title()
+                break
+        if matched_loc:
+            return IntentCatalogMetadata(
+                intent="analytics",
+                subtype="regional_activity",
+                target_location=matched_loc,
+                confidence=0.95,
+                reasoning=f"Filtro territorial para {matched_loc}",
+                step1_latency_ms=latency_ms
+            )
 
-        # 3. Estado de la plataforma / Telemetría
-        status_triggers = [
-            "total de sismos", "datos cargados", "estado del sistema",
-            "salud de la plataforma", "origen de los datos", "de donde vienen los datos",
-            "cada cuanto se actualiza", "pipeline status", "cuantos registros cargados",
-            "estado del pipeline", "salud del sistema"
-        ]
-        if any(trigger in p for trigger in status_triggers) and not any(w in p for w in ["mas fuerte", "mas reciente", "ultimo", "hoy"]):
-            return "STATUS"
+        # Predeterminado a analítica
+        return IntentCatalogMetadata(
+            intent="analytics",
+            subtype="latest_event",
+            confidence=0.90,
+            reasoning="Consulta de datos cuantitativos sobre DuckDB",
+            step1_latency_ms=latency_ms
+        )
 
-        # 4. Conocimiento científico / divulgación / prevención
-        knowledge_triggers = [
-            "que es", "por que tiembla", "por que ocurren", "escala richter", "magnitud de momento",
-            "falla de san andres", "falla geologica", "cinturon de fuego", "anillo de fuego",
-            "que hacer en", "medidas de prevencion", "evacuar", "mochila de emergencia",
-            "como se produce un tsunami", "placas tectonicas", "subduccion", "mercalli",
-            "seguridad", "recomendaciones de seguridad"
-        ]
-        if any(trigger in p for trigger in knowledge_triggers):
-            return "KNOWLEDGE"
+    # ==========================================================================
+    # FASE 2: EJECUCIÓN ESPECIALIZADA GUIADA POR EL CATÁLOGO
+    # ==========================================================================
 
-        # 5. Si menciona sismos o lugares geográficos conocidos, asumir analítica
-        if has_seismic or any(loc in p for loc in ["california", "alaska", "chile", "japon", "mexico", "peru", "hawaii"]):
-            return "ANALYTICS"
-
-        # Por defecto
-        return "CONVERSATIONAL" if len(p.split()) <= 3 else "KNOWLEDGE"
-
-    def process_message(self, prompt: str) -> Dict[str, Any]:
+    def execute_cataloged_strategy(self, catalog: IntentCatalogMetadata, raw_prompt: str) -> Dict[str, Any]:
         """
-        Procesa el mensaje del usuario con la estrategia adecuada según su intención inferida.
+        Fase 2: Ejecuta la acción exacta determinada por la catalogación de la Fase 1.
         """
-        clean_prompt = prompt.strip()
-        intent = self.classify_intent(clean_prompt)
-        logger.info(f"Inferencia cognitiva para '{clean_prompt[:40]}...': INTENT={intent}")
+        intent = catalog.intent
 
-        if intent == "CONVERSATIONAL":
-            return self._handle_conversational(clean_prompt)
-        elif intent == "STATUS":
-            return self._handle_status(clean_prompt)
-        elif intent == "KNOWLEDGE":
-            return self._handle_knowledge(clean_prompt)
+        if intent == "conversational":
+            return self._handle_conversational(raw_prompt)
+        elif intent == "status":
+            return self._handle_status(raw_prompt)
+        elif intent == "knowledge":
+            return self._handle_knowledge(raw_prompt)
         else:
-            return self._handle_analytics(clean_prompt)
+            return self._handle_analytics_guided(catalog, raw_prompt)
 
     # --------------------------------------------------------------------------
     # Handlers Especializados
@@ -295,7 +391,7 @@ class CognitiveAgent:
         """Responde preguntas conceptuales, científicas y de prevención en lenguaje natural puro."""
         p_norm = _normalize_text(prompt)
 
-        # 1. Búsqueda en base de conocimiento de alta fidelidad (orden por especificidad)
+        # 1. Búsqueda en base de conocimiento de alta fidelidad
         for key, text in sorted(KNOWLEDGE_KB.items(), key=lambda x: len(x[0]), reverse=True):
             if key in p_norm:
                 return {
@@ -311,14 +407,14 @@ class CognitiveAgent:
         try:
             sys_prompt = (
                 "Eres un sismólogo y experto en gestión de riesgos de desastres de SismoWatch. "
-                "Responde la siguiente pregunta del usuario de forma profesional, clara, didáctica y estructurada con viñetas en Markdown. "
-                "NO generes código SQL ni inventes tablas de base de datos. Enfócate exclusivamente en la explicación conceptual o de seguridad."
+                "Responde la siguiente pregunta del usuario de forma profesional, didáctica y estructurada con viñetas en Markdown. "
+                "NO generes código SQL ni inventes tablas. Enfócate exclusivamente en la explicación conceptual o de seguridad."
             )
             payload = {
                 "model": self.model,
                 "prompt": f"{sys_prompt}\nPregunta del usuario: {prompt}\nRespuesta:",
                 "stream": False,
-                "options": {"temperature": 0.2, "num_predict": 250}
+                "options": {"temperature": 0.2, "num_predict": 220}
             }
             resp = requests.post(self.ollama_url, json=payload, timeout=25)
             if resp.status_code == 200:
@@ -333,7 +429,7 @@ class CognitiveAgent:
                         "row_count": 0,
                     }
         except Exception as e:
-            logger.warning(f"Ollama no respondió a tiempo para consulta de conocimiento: {e}")
+            logger.warning(f"Ollama no respondió para consulta de conocimiento: {e}")
 
         # Fallback genérico científico
         fallback_reply = (
@@ -350,88 +446,67 @@ class CognitiveAgent:
             "row_count": 0,
         }
 
-    def _handle_analytics(self, prompt: str) -> Dict[str, Any]:
-        """Traduce lenguaje natural a SQL DuckDB, ejecuta sobre Parquets y entrega datos/gráficos estructurados."""
-        clean_prompt = prompt.strip()
-        p_lower = _normalize_text(clean_prompt)
+    def _handle_analytics_guided(self, catalog: IntentCatalogMetadata, raw_prompt: str) -> Dict[str, Any]:
+        """
+        Ejecuta la analítica en DuckDB guiada con precisión por el subtipo catalogado en la Fase 1.
+        """
+        subtype = catalog.subtype
         sql_to_execute = None
 
-        is_latest_query = any(w in p_lower for w in ["ultimo", "ultima", "ultimos", "ultimas", "reciente", "recientes"]) and any(w in p_lower for w in ["sismo", "temblor", "terremoto", "donde", "cuando", "cual", "fue"])
-        is_strongest_query = any(w in p_lower for w in ["fuerte", "fuertes", "mayor", "mayores", "maximo", "maxima", "max", "potente", "grande", "grandes"])
-        is_tsunami_query = "tsunami" in p_lower
+        if subtype == "latest_event":
+            sql_to_execute = "SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events ORDER BY time DESC LIMIT 1"
+        elif subtype == "strongest_events":
+            sql_to_execute = "SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events ORDER BY mag DESC LIMIT 5"
+        elif subtype == "tsunami_alerts":
+            sql_to_execute = "SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events WHERE tsunami = 1 ORDER BY time DESC LIMIT 5"
+        elif subtype == "aggregation":
+            sql_to_execute = "SELECT place, COUNT(*) as count, ROUND(AVG(mag), 2) as avg_mag FROM earthquake_events GROUP BY place ORDER BY count DESC LIMIT 5"
+        elif subtype == "regional_activity" and catalog.target_location:
+            loc = catalog.target_location.lower()
+            sql_to_execute = f"SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events WHERE LOWER(place) LIKE '%{loc}%' ORDER BY time DESC LIMIT 5"
+        else:
+            # Fallback a Text-to-SQL guiado por LLM
+            try:
+                sys_prompt = (
+                    "Eres un asistente de datos SQL para DuckDB sobre la vista `earthquake_events` "
+                    "(columnas: id, mag, place, time, depth_km, tsunami, sig).\n"
+                    f"Contexto: La intención ya fue clasificada como '{subtype}'.\n"
+                    "Genera ÚNICAMENTE una consulta SQL válida que comience con SELECT. Sin markdown ni explicaciones.\n"
+                    "Siempre incluye LIMIT."
+                )
+                payload = {
+                    "model": self.model,
+                    "prompt": f"{sys_prompt}\nPregunta: {raw_prompt}\nSQL:",
+                    "stream": False,
+                    "options": {"temperature": 0.1, "num_predict": 100}
+                }
+                resp = requests.post(self.ollama_url, json=payload, timeout=20)
+                if resp.status_code == 200:
+                    raw_sql = resp.json().get("response", "").strip()
+                    clean_candidate = re.sub(r"^```(?:sql)?\s*", "", raw_sql, flags=re.IGNORECASE)
+                    clean_candidate = re.sub(r"\s*```$", "", clean_candidate).strip().rstrip(";")
+                    sql_match = re.search(r"SELECT\s+.*", clean_candidate, re.IGNORECASE | re.DOTALL)
+                    if sql_match:
+                        sql_to_execute = sql_match.group(0).strip()
+            except Exception:
+                pass
 
-        # 1. Intentar Text-to-SQL con Qwen 2.5:2b
-        try:
-            sys_prompt = (
-                "Eres un analista de datos SQL para DuckDB sobre la tabla/vista `earthquake_events` "
-                "(columnas disponibles: id, mag, place, time, longitude, latitude, depth_km, tsunami, sig).\n"
-                "Instrucciones estrictas:\n"
-                "1. Devuelve ÚNICAMENTE la consulta SQL comenzando con SELECT. Sin explicaciones ni formato markdown.\n"
-                "2. Si piden el último sismo o el más reciente, usa: "
-                "SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events ORDER BY time DESC LIMIT 1\n"
-                "3. Si piden los más fuertes o de mayor magnitud, usa: "
-                "SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events ORDER BY mag DESC LIMIT 5\n"
-                "4. Si piden sismos en una región o país, usa: "
-                "SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events WHERE LOWER(place) LIKE '%region%' ORDER BY time DESC LIMIT 5\n"
-                "5. Si piden dónde tiembla más o ranking de zonas, usa: "
-                "SELECT place, COUNT(*) as count, ROUND(AVG(mag), 2) as avg_mag FROM earthquake_events GROUP BY place ORDER BY count DESC LIMIT 5\n"
-                "6. NUNCA devuelvas consultas sin LIMIT."
-            )
-            payload = {
-                "model": self.model,
-                "prompt": f"{sys_prompt}\nPregunta del usuario: {clean_prompt}\nSQL:",
-                "stream": False,
-                "options": {"temperature": 0.1, "num_predict": 120}
-            }
-            resp = requests.post(self.ollama_url, json=payload, timeout=25)
-            if resp.status_code == 200:
-                raw_sql = resp.json().get("response", "").strip()
-                clean_candidate = re.sub(r"^```(?:sql)?\s*", "", raw_sql, flags=re.IGNORECASE)
-                clean_candidate = re.sub(r"\s*```$", "", clean_candidate)
-                clean_candidate = clean_candidate.strip().rstrip(";")
-                sql_match = re.search(r"SELECT\s+.*", clean_candidate, re.IGNORECASE | re.DOTALL)
-                if sql_match:
-                    candidate = sql_match.group(0).strip()
-                    if candidate.upper().startswith("SELECT"):
-                        sql_to_execute = candidate
-        except Exception as e:
-            logger.warning(f"Ollama no disponible para Text-to-SQL ({e}); activando motor determinista.")
+            if not sql_to_execute:
+                sql_to_execute = "SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events ORDER BY time DESC LIMIT 5"
 
-        # 2. Fallback determinista de alta fidelidad si no se obtuvo SQL del modelo
-        if not sql_to_execute:
-            if is_latest_query:
-                limit_n = 5 if any(w in p_lower for w in ["ultimos", "recientes"]) else 1
-                sql_to_execute = f"SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events ORDER BY time DESC LIMIT {limit_n}"
-            elif is_strongest_query:
-                sql_to_execute = "SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events ORDER BY mag DESC LIMIT 5"
-            elif is_tsunami_query:
-                sql_to_execute = "SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events WHERE tsunami = 1 ORDER BY time DESC LIMIT 5"
-            elif any(w in p_lower for w in ["donde", "region", "zona", "mas sismos"]):
-                sql_to_execute = "SELECT place, COUNT(*) as count, ROUND(AVG(mag), 2) as avg_mag FROM earthquake_events GROUP BY place ORDER BY count DESC LIMIT 5"
-            else:
-                matched_place = None
-                for loc in ["california", "alaska", "hawaii", "nevada", "texas", "utah", "chile", "japon", "japan", "mexico", "peru", "panama", "indonesia", "colombia"]:
-                    if loc in p_lower:
-                        matched_place = loc
-                        break
-                if matched_place:
-                    sql_to_execute = f"SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events WHERE LOWER(place) LIKE '%{matched_place}%' ORDER BY time DESC LIMIT 5"
-                else:
-                    sql_to_execute = "SELECT place, mag, depth_km, strftime(time, '%Y-%m-%d %H:%M:%S UTC') as time FROM earthquake_events ORDER BY time DESC LIMIT 5"
-
-        # 3. Salvaguarda de límite obligatorio
+        # Salvaguarda de LIMIT obligatorio
         upper_sql = sql_to_execute.upper()
         if "LIMIT" not in upper_sql and "GROUP BY" not in upper_sql and "COUNT(" not in upper_sql:
             sql_to_execute = f"{sql_to_execute.rstrip(';')} LIMIT 10"
 
-        # 4. Ejecución en DuckDB
+        # Ejecución en DuckDB
         try:
             res = duckdb_service.execute_read_only_query(sql_to_execute)
             row_count = res.get("row_count", 0)
             data = res.get("data", [])
             cols = res.get("columns", [])
 
-            # Formatear timestamps en los datos
+            # Formatear timestamps
             for row in data:
                 for k, v in row.items():
                     if isinstance(v, str) and "T" in v and len(v) >= 16:
@@ -444,7 +519,7 @@ class CognitiveAgent:
                 depth_val = top_item.get("depth_km", "N/A")
                 time_val = top_item.get("time", "")
 
-                if (is_latest_query or "ultimo" in p_lower) and row_count == 1:
+                if subtype == "latest_event":
                     reply = (
                         f"📍 **Último sismo registrado:**\n\n"
                         f"• **Epicentro:** *{place_str}*\n"
@@ -453,25 +528,19 @@ class CognitiveAgent:
                         f"• **Hora:** {time_val}\n\n"
                         f"*(Información en tiempo real sincronizada desde USGS en DuckDB)*"
                     )
-                elif (is_latest_query or "ultimo" in p_lower) and row_count > 1:
-                    reply = (
-                        f"📍 **Últimos sismos registrados:**\n\n"
-                        f"El sismo más reciente ocurrió en *{place_str}* con magnitud **{mag_val} Mw** ({time_val}). "
-                        f"Se presentan los {row_count} eventos más recientes:"
-                    )
-                elif is_strongest_query:
+                elif subtype == "strongest_events":
                     reply = (
                         f"💥 **Sismo de mayor magnitud registrado:**\n\n"
                         f"• **Epicentro:** *{place_str}*\n"
                         f"• **Magnitud:** **{mag_val} Mw**\n"
                         f"• **Profundidad:** **{depth_val} km**\n"
                         f"• **Hora:** {time_val}\n\n"
-                        f"Se presentan los {row_count} sismos de mayor intensidad:"
+                        f"Se presentan los {row_count} sismos de mayor intensidad sísmica:"
                     )
-                elif is_tsunami_query:
+                elif subtype == "tsunami_alerts":
                     reply = (
                         f"🌊 **Eventos sísmicos con alerta de tsunami:**\n\n"
-                        f"Se encontraron **{row_count} eventos** con alerta de tsunami. "
+                        f"Se encontraron **{row_count} eventos** con indicador de tsunami activo. "
                         f"El evento principal se registró en *{place_str}* con magnitud **{mag_val} Mw**."
                     )
                 elif "count" in top_item and "place" in top_item:
@@ -480,13 +549,11 @@ class CognitiveAgent:
                         f"La zona con mayor frecuencia es *'{top_item['place']}'* con **{top_item.get('count', 0)} sismos** "
                         f"y una magnitud promedio de **{top_item.get('avg_mag', 0)} Mw**."
                     )
-                elif "mag" in top_item and "place" in top_item:
+                else:
                     reply = (
                         f"📊 Se recuperaron **{row_count} eventos sísmicos** en DuckDB.\n\n"
                         f"El evento principal es de magnitud **{mag_val} Mw** en *'{place_str}'* ({time_val})."
                     )
-                else:
-                    reply = f"Consulta analítica ejecutada exitosamente sobre DuckDB ({row_count} registros recuperados)."
             else:
                 reply = "La consulta se ejecutó exitosamente pero no se encontraron registros que coincidan con esos criterios."
 
@@ -497,7 +564,7 @@ class CognitiveAgent:
             cols = []
             row_count = 0
 
-        # 5. Inferencia de gráfico solo si agrega valor visual (entre 2 y 30 puntos)
+        # Inferencia de gráfico solo si agrega valor visual (entre 2 y 30 puntos)
         chart_sug = None
         if 2 <= len(data) <= 30:
             from routes.chat_routes import infer_chart_type
@@ -511,6 +578,34 @@ class CognitiveAgent:
             "chart_suggestion": chart_sug,
             "row_count": row_count,
         }
+
+    # ==========================================================================
+    # PIPELINE INTEGRAL DE 2 PASOS (PROCESAMIENTO COMPLETO)
+    # ==========================================================================
+
+    def process_message(self, prompt: str) -> Dict[str, Any]:
+        """
+        Orquesta el flujo integral de 2 fases:
+        Paso 1: Catalogación estructurada con Qwen 2.5:2b.
+        Paso 2: Ejecución guiada y ensamble con metadatos de auditoría para Admin.
+        """
+        t_global = time.perf_counter()
+        clean_prompt = prompt.strip()
+
+        # PASO 1: Identificación y catalogación
+        catalog = self.classify_and_catalog(clean_prompt)
+        logger.info(f"Paso 1 Catalogado: intent={catalog.intent}, subtype={catalog.subtype}, confidence={catalog.confidence} ({catalog.step1_latency_ms}ms)")
+
+        # PASO 2: Ejecución según catálogo
+        result = self.execute_cataloged_strategy(catalog, clean_prompt)
+
+        # Cálculo de latencia global
+        total_latency = round((time.perf_counter() - t_global) * 1000, 2)
+        catalog.total_latency_ms = total_latency
+
+        # Adjuntar metadatos de catalogación
+        result["catalog"] = catalog.dict()
+        return result
 
 
 cognitive_agent = CognitiveAgent()

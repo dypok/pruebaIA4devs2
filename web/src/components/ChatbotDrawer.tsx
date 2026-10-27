@@ -21,7 +21,8 @@ import {
   Tooltip,
 } from 'recharts';
 import { sendChatMessage } from '../services/api';
-import { ChartSuggestion, PinnedChart } from '../types';
+import { ChartSuggestion, PinnedChart, IntentCatalogMetadata } from '../types';
+import { useAuth } from '../context/AuthContext';
 
 interface Message {
   id: string;
@@ -31,6 +32,7 @@ interface Message {
   sql?: string;
   data?: any[];
   chart?: ChartSuggestion;
+  catalog?: IntentCatalogMetadata;
   timestamp: string;
 }
 
@@ -45,6 +47,7 @@ export const ChatbotDrawer: React.FC<ChatbotDrawerProps> = ({
   onClose,
   onPinChart,
 }) => {
+  const { isAdmin } = useAuth();
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
@@ -117,6 +120,7 @@ export const ChatbotDrawer: React.FC<ChatbotDrawerProps> = ({
         sql: resp.sql,
         data: resp.data,
         chart: resp.chart_suggestion,
+        catalog: resp.catalog,
         timestamp: new Date().toLocaleTimeString(),
       };
       setMessages((prev) => [...prev, botMsg]);
@@ -243,6 +247,32 @@ export const ChatbotDrawer: React.FC<ChatbotDrawerProps> = ({
             >
               {/* Contenido formateado en Markdown */}
               <div className="space-y-0.5 text-xs leading-relaxed">{renderFormattedText(m.text)}</div>
+
+              {/* Badge de Auditoría de Catalogación Cognitiva (Exclusivo para ADMIN) */}
+              {isAdmin && m.catalog && (
+                <div className="mt-2.5 pt-2 border-t border-slate-700/60 text-[10px] font-mono">
+                  <div className="flex flex-wrap items-center justify-between gap-1.5 bg-slate-950/70 p-1.5 rounded border border-slate-800">
+                    <div className="flex items-center gap-1.5">
+                      <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 font-semibold border border-amber-500/30 uppercase text-[9px] tracking-wider">
+                        Audit Admin
+                      </span>
+                      <span className="text-sky-300 font-bold uppercase">{m.catalog.intent}</span>
+                      <span className="text-slate-600">/</span>
+                      <span className="text-slate-300">{m.catalog.subtype}</span>
+                      <span className="text-slate-600">•</span>
+                      <span className="text-emerald-400 font-semibold">{Math.round(m.catalog.confidence * 100)}%</span>
+                    </div>
+                    <span className="text-slate-400 text-[9px]">
+                      Paso 1: {m.catalog.step1_latency_ms.toFixed(0)}ms • Total: {m.catalog.total_latency_ms.toFixed(0)}ms
+                    </span>
+                  </div>
+                  {m.catalog.reasoning && (
+                    <div className="text-[10px] text-slate-400 italic mt-1 px-1">
+                      💡 {m.catalog.reasoning}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Consulta SQL generada (colapsable con toggle) */}
               {m.sql && (
