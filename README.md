@@ -77,3 +77,4 @@ docker compose up -d
 - **Cero Badges:** Se eliminaron las etiquetas tipo píldora de colores; se usan indicadores tipográficos limpios y puntos discretos de estado (`status dots`).
 - **Cero Exceso de Cards:** Barra unificada de métricas (`MetricRibbon`) y paneles continuos con diseño profesional (estilo Datadog / Stripe).
 - **Dashboard Dinámico:** Mapa Leaflet, gráficos fijos y sección de gráficos analíticos interactivos fijados desde el Chatbot.
+# pruebaIA4devs2
