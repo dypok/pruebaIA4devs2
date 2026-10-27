@@ -1,4 +1,4 @@
-# Documento de Arquitectura de Datos: Plataforma SismoWatch (Data Lakehouse con MinIO, Spark, Parquet y DuckDB)
+# Documento de Arquitectura de Datos: Plataforma SismoWatch (Data Lakehouse con MinIO, Spark, Parquet, DuckDB y Dashboards Dinámicos con IA)
 
 ## 1. Propósito de la Arquitectura
 
@@ -7,12 +7,12 @@ SuperApp requiere monitorear la sismicidad global en tiempo casi real para antic
 - **No preserva historial:** Únicamente expone una ventana móvil de eventos recientes.
 - **Sufre mutaciones posteriores:** Los sismos son recalculados por sismólogos (cambios de magnitud, estado de revisión o relocalización de coordenadas), generando riesgo de duplicidad o inconsistencia.
 - **Carece de validación de calidad y control de esquema:** Datos anómalos o malformados pueden propagarse sin control.
-- **No ofrece síntesis ejecutiva ni consumo ágil:** No existe una plataforma centralizada que permita a los analistas de riesgo visualizar mapas, consultar gráficos, recibir reportes ejecutivos o consultar datos en lenguaje natural.
+- **No ofrece síntesis ejecutiva ni consumo ágil:** No existe una plataforma centralizada que permita a los analistas de riesgo visualizar mapas, consultar gráficos, recibir reportes ejecutivos o consultar datos en lenguaje natural con generación automática de visualizaciones interactivas.
 
 ### 1.2 A Quién Sirve
 - **Área de Gestión de Riesgo y Operaciones:** Para priorizar toma de decisiones, activar protocolos de contingencia ante eventos de alta magnitud o alertas de tsunami, y consultar tendencias territoriales.
 - **Ingenieros y Operadores de Datos:** Para monitorear la salud del pipeline, recibir alertas inmediatas de registros con anomalías de esquema o calidad, y auditar la frescura del dato.
-- **Directivos de SuperApp:** Para recibir resúmenes ejecutivos diarios generados por IA con métricas consolidadas matemáticamente confiables.
+- **Directivos de SuperApp:** Para recibir resúmenes ejecutivos diarios generados por IA con métricas consolidadas matemáticamente confiables y crear gráficos analíticos personalizados fijables en el dashboard.
 
 ---
 
@@ -27,7 +27,8 @@ flowchart LR
     Silver -->|Filtro: solo VALID + Enriquecimiento| Gold["GOLD (MinIO Parquet)<br/>Datos certificados + Agregaciones"]
     
     Gold -->|read_parquet() con httpfs| DuckDB["DuckDB Engine<br/>(FastAPI)"]
-    DuckDB --> Chatbot["Chatbot Qwen 2.5:2b<br/>& Dashboard Web"]
+    DuckDB --> Chatbot["Chatbot Qwen 2.5:2b<br/>(Text-to-SQL + Auto-Chart)"]
+    Chatbot -->|📌 Fijar gráfico dinámico| Dashboard["Dashboard React en Vivo<br/>(Se actualiza con SSE)"]
 ```
 
 ---
@@ -51,9 +52,9 @@ flowchart TD
 
     subgraph CapaLakehouse["3. Object Storage Data Lake (MinIO S3)"]
         direction TB
-        MINIO_RAW[("BRONZE: sismowatch-lake/bronze/<br/>year=YYYY/month=MM/day=DD/<br/>events_HHMMSS.geojson")]
-        MINIO_SILVER[("SILVER: sismowatch-lake/silver/<br/>earthquake_events/year=YYYY/month=MM/<br/>Parquet: VALID + INVALID")]
-        MINIO_GOLD[("GOLD: sismowatch-lake/gold/<br/>earthquake_events/year=YYYY/month=MM/<br/>Parquet certificado (solo VALID)")]
+        MINIO_RAW[("BRONZE: sismowatch-lake/bronze/<br/>events_HHMMSS.geojson")]
+        MINIO_SILVER[("SILVER: sismowatch-lake/silver/<br/>Parquet: VALID + INVALID con error_detail")]
+        MINIO_GOLD[("GOLD: sismowatch-lake/gold/<br/>Parquet certificado (solo VALID)")]
     end
 
     subgraph CapaProcesamiento["4. Procesamiento Distribuido (Apache Spark)"]
@@ -71,21 +72,21 @@ flowchart TD
 
     subgraph CapaIA["7. Inteligencia Artificial Local (Ollama)"]
         OLLAMA_SERVER["Ollama Daemon (Inferencia Local CPU)"]
-        MODEL_QWEN["Modelo Qwen 2.5:2b<br/>(Text-to-SQL DuckDB)"]
+        MODEL_QWEN["Modelo Qwen 2.5:2b<br/>(Text-to-SQL + Sugerencia de Gráficos)"]
     end
 
     subgraph CapaServicio["8. Capa de API y Backend (FastAPI)"]
         FASTAPI_CORE["FastAPI REST & SSE Server"]
         AUTH_JWT["Seguridad RBAC (JWT)<br/>Viewer vs Admin"]
-        CHAT_SERVICE["Servicio de Chatbot<br/>(Prompt ➔ SQL DuckDB ➔ Síntesis)"]
+        CHAT_SERVICE["Servicio Chatbot y Auto-Charts<br/>(SQL ➔ DuckDB ➔ Datos estructurados ➔ Tipo de Gráfico)"]
     end
 
     subgraph CapaConsumo["9. Consumo Web (React + TypeScript + Vite)"]
         METRIC_RIBBON["Metric Ribbon Unificado<br/>(Métricas clave sin cards pesadas)"]
         LEAFLET_MAP["Mapa Interactivo Global (Leaflet)"]
-        TIME_CHARTS["Series Temporales y Distribución (Recharts)"]
+        PINNED_CHARTS["Panel de Gráficos Fijados desde Chatbot<br/>(Reactivos a eventos en tiempo real SSE)"]
         SSE_LIVE["Recepción En Vivo (SSE)"]
-        CHATBOT_WIDGET["Drawer Chatbot SismoWatch AI<br/>(Consultas DuckDB en lenguaje natural)"]
+        CHATBOT_WIDGET["Drawer Chatbot SismoWatch AI<br/>(Generación de Gráficos con botón 📌 Fijar)"]
     end
 
     %% Conexiones
@@ -113,25 +114,27 @@ flowchart TD
 
     FASTAPI_CORE --> METRIC_RIBBON
     FASTAPI_CORE --> LEAFLET_MAP
-    FASTAPI_CORE --> TIME_CHARTS
+    FASTAPI_CORE --> PINNED_CHARTS
     FASTAPI_CORE --> SSE_LIVE
     FASTAPI_CORE <--> CHATBOT_WIDGET
+    CHATBOT_WIDGET -.->|📌 Fijar gráfico personalizado| PINNED_CHARTS
 ```
 
 ---
 
-## 4. Estructura de Capas en MinIO S3 (`sismowatch-lake`)
+## 4. Gráficos Dinámicos y Fijables en el Dashboard desde el Chatbot
 
-| Capa | Ruta en MinIO S3 | Formato | Contenido y Función |
-| :--- | :--- | :--- | :--- |
-| **BRONZE** | `s3://sismowatch-lake/bronze/` | `.geojson` / `.json` | Almacenamiento inmutable del feed crudo tal como llega de la API de USGS. Permite reprocesar cualquier histórico en caso de cambios de lógica. |
-| **SILVER** | `s3://sismowatch-lake/silver/earthquake_events/` | `.snappy.parquet` | Datos aplanados y tipados por Apache Spark. Contiene todos los eventos con su estado de ciclo de vida (`VALID` o `INVALID`). Si hay registros no conformes, se preserva el motivo en `validation_error` y se detona la alerta en Airflow para auditoría. |
-| **GOLD** | `s3://sismowatch-lake/gold/earthquake_events/` | `.snappy.parquet` | Datos analíticos certificados. Contiene **únicamente registros con estado `VALID`**, enriquecidos con categorizaciones de riesgo y listos para ser consumidos por **DuckDB** para el dashboard y el Chatbot. |
+### 4.1 Generación Automática de Gráficos (Auto-Chart)
+Cuando un usuario consulta al Chatbot en lenguaje natural:
+1. **Traducción SQL:** `qwen2.5:2b` genera la consulta DuckDB de solo lectura.
+2. **Ejecución Vectorizada:** DuckDB ejecuta la consulta sobre los Parquet de MinIO y obtiene los registros en milisegundos.
+3. **Inferencia de Tipo de Gráfico:** El servicio analiza la estructura de los datos resultantes:
+   - *Tiempo + Métrica numéricas:* Gráfico de líneas o áreas temporales (`line` / `area`).
+   - *Categoría geográfica + Métrica:* Gráfico de barras horizontales o verticales (`bar`).
+   - *Distribución de magnitudes:* Histograma o distribución (`histogram`).
+4. **Renderizado en el Chat:** El Chatbot dibuja el gráfico interactivo (Recharts) en la misma ventana de conversación, junto con la síntesis explicativa.
 
----
-
-## 5. Alerta Inmediata en Airflow y Resiliencia `try/catch`
-1. Cada llamada a la API de USGS y cada operación de I/O en MinIO está envuelta en bloques `try/catch`.
-2. Si un registro en el lote incumple las reglas de Pandera, se marca como `INVALID` en la capa **Silver**.
-3. **Alerta Inmediata:** Si existen registros con estado `INVALID`, Airflow ejecuta la tarea `notify_invalid_records` que emite una alerta destacada en los logs y la interfaz para que el operador de datos pueda corregirlo.
-4. Los registros válidos continúan hacia la capa **Gold** de MinIO sin interrumpir el flujo.
+### 4.2 Fijación y Reactividad en Tiempo Real (Pin to Dashboard)
+- **Botón `📌 Fijar al Dashboard`:** Permite al usuario añadir ese gráfico a la sección de **"Visualizaciones Personalizadas"** del Dashboard principal.
+- **Actualización Reactiva Continua:** Cada gráfico fijado guarda la consulta DuckDB subyacente. Cuando el canal **SSE (`/api/stream`)** recibe nuevos eventos sísmicos en vivo, DuckDB re-evalúa la consulta y el gráfico en el Dashboard se actualiza automáticamente con los datos más recientes.
+- **Persistencia en Navegador:** La configuración de gráficos fijados se guarda en `localStorage`, permaneciendo disponible al recargar la sesión.
