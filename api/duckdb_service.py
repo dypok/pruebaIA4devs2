@@ -1,6 +1,7 @@
 import os
 import re
 import logging
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
 import duckdb
@@ -9,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 class DuckDBService:
     def __init__(self):
+        self._lock = threading.Lock()
         self.conn = duckdb.connect(database=":memory:")
         self._init_database()
 
@@ -126,11 +128,18 @@ class DuckDBService:
             FROM earthquake_events;
         """).fetchone()
 
-        total = res[0]
-        max_mag = float(res[1])
-        avg_mag = float(res[2])
-        tsunami_count = int(res[3])
-        last_update = str(res[4]) if res[4] else datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if res:
+            total = res[0]
+            max_mag = float(res[1])
+            avg_mag = float(res[2])
+            tsunami_count = int(res[3])
+            last_update = str(res[4]) if res[4] else datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        else:
+            total = 0
+            max_mag = 0.0
+            avg_mag = 0.0
+            tsunami_count = 0
+            last_update = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         # Cálculo de calidad real basado en Silver
         try:
@@ -278,7 +287,6 @@ class DuckDBService:
         Ejecuta una consulta SQL de solo lectura validada sobre DuckDB.
         Garantiza protección contra inyecciones SQL DDL/DML.
         """
-        self.refresh_from_s3()
         # 1. Validación de seguridad
         clean_sql = sql_query.strip().rstrip(";")
         if not clean_sql.upper().startswith("SELECT"):
@@ -289,10 +297,12 @@ class DuckDBService:
             if re.search(rf"\b{word}\b", clean_sql, re.IGNORECASE):
                 raise ValueError(f"Comando '{word}' denegado por política de mínimo privilegio.")
 
-        # 2. Ejecución
-        result = self.conn.execute(clean_sql)
-        columns = [desc[0] for desc in result.description]
-        rows = result.fetchall()
+        # 2. Ejecución thread-safe con cursor aislado
+        with self._lock:
+            cursor = self.conn.cursor()
+            result = cursor.execute(clean_sql)
+            columns = [desc[0] for desc in result.description]
+            rows = result.fetchall()
 
         data = []
         for row in rows:

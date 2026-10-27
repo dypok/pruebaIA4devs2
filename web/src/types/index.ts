@@ -42,6 +42,15 @@ export interface ChartSuggestion {
   secondary_y_key?: string;
 }
 
+export interface ChatResponse {
+  intent?: 'conversational' | 'knowledge' | 'status' | 'analytics';
+  reply: string;
+  sql?: string;
+  data?: any[];
+  chart_suggestion?: ChartSuggestion;
+  row_count?: number;
+}
+
 export interface PinnedChart {
   id: string;
   title: string;

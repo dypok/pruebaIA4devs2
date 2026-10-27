@@ -73,6 +73,7 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
+    intent: str = Field("analytics", description="conversational | knowledge | status | analytics")
     reply: str
     sql: Optional[str] = None
     data: List[Dict[str, Any]] = []

@@ -1,4 +1,4 @@
-import { KpiData, SeismicEvent, TimeseriesPoint, TopRegionItem, AiReport, PipelineTelemetry, ChartSuggestion } from '../types';
+import { KpiData, SeismicEvent, TimeseriesPoint, TopRegionItem, AiReport, PipelineTelemetry, ChartSuggestion, ChatResponse } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
@@ -94,13 +94,7 @@ export async function triggerAiRegenerateApi(): Promise<any> {
   return resp.json();
 }
 
-export async function sendChatMessage(prompt: string): Promise<{
-  reply: string;
-  sql: string;
-  data: any[];
-  chart_suggestion?: ChartSuggestion;
-  row_count: number;
-}> {
+export async function sendChatMessage(prompt: string): Promise<ChatResponse> {
   const resp = await fetch(`${API_BASE}/api/chat`, {
     method: 'POST',
     headers: getAuthHeaders(),

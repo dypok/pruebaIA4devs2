@@ -101,9 +101,10 @@ def get_invalid_quarantined_records(user: dict = Depends(require_admin)):
     """
     try:
         res = duckdb_service.execute_read_only_query("""
-            SELECT id, mag, place, strftime(time, '%Y-%m-%dT%H:%M:%SZ') as time,
-                   longitude, latitude, depth_km, processing_status, validation_error,
-                   strftime(time, '%Y-%m-%dT%H:%M:%SZ') as quarantined_at
+            SELECT id, mag, place, time,
+                   longitude, latitude, depth_km, processing_status,
+                   CAST(validation_error AS VARCHAR) as validation_error,
+                   updated as quarantined_at
             FROM read_parquet('s3://sismowatch-lake/silver/**/*.parquet')
             WHERE processing_status = 'INVALID'
             LIMIT 50;
@@ -176,9 +177,9 @@ def trigger_ai_report_regeneration(user: dict = Depends(require_admin)):
                 "model": OLLAMA_MODEL,
                 "prompt": prompt,
                 "stream": False,
-                "options": {"temperature": 0.2, "num_predict": 250}
+                "options": {"temperature": 0.2, "num_predict": 100}
             },
-            timeout=30
+            timeout=60
         )
         if resp.status_code == 200:
             narrative = resp.json().get("response", "").strip()
@@ -197,10 +198,11 @@ def trigger_ai_report_regeneration(user: dict = Depends(require_admin)):
         zones_json = json.dumps(active_zones)
         highlighted_json = json.dumps(highlighted)
 
+        duckdb_service.conn.execute("DELETE FROM pg.curated.ai_reports WHERE report_date = ?::DATE;", [report_date])
         duckdb_service.conn.execute("""
-            INSERT OR REPLACE INTO pg.curated.ai_reports 
+            INSERT INTO pg.curated.ai_reports 
             (report_date, title, executive_summary, active_zones, highlighted_events, calculated_metrics, ai_verified, generated_at)
-            VALUES (?::DATE, ?, ?, ?::JSONB, ?::JSONB, ?::JSONB, true, ?::TIMESTAMPTZ);
+            VALUES (?::DATE, ?, ?, ?::JSON, ?::JSON, ?::JSON, true, ?::TIMESTAMPTZ);
         """, [report_date, title, narrative, zones_json, highlighted_json, metrics_json, now.isoformat()])
 
         return {

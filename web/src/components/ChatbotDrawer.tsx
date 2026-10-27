@@ -7,6 +7,8 @@ import {
   Check,
   Code2,
   Sparkles,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -25,6 +27,7 @@ interface Message {
   id: string;
   sender: 'user' | 'bot';
   text: string;
+  intent?: 'conversational' | 'knowledge' | 'status' | 'analytics';
   sql?: string;
   data?: any[];
   chart?: ChartSuggestion;
@@ -45,16 +48,22 @@ export const ChatbotDrawer: React.FC<ChatbotDrawerProps> = ({
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
+  const [expandedSql, setExpandedSql] = useState<Record<string, boolean>>({});
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'welcome',
       sender: 'bot',
-      text: '¡Hola! Soy el asistente analítico de SismoWatch impulsado por Qwen 2.5:2b. Puedes hacerme preguntas en lenguaje natural sobre sismos, zonas activas o tendencias y te generaré consultas SQL sobre DuckDB y gráficos interactivos.',
+      intent: 'conversational',
+      text: '¡Hola! 👋 Soy el asistente inteligente de **SismoWatch** impulsado por IA local (Qwen 2.5:2b).\n\nPuedes hacerme preguntas cuantitativas sobre sismos (consultas DuckDB y gráficos interactivos), conceptos científicos de geofísica o protocolos de seguridad y prevención ante emergencias.',
       timestamp: new Date().toLocaleTimeString(),
     },
   ]);
 
   if (!isOpen) return null;
+
+  const toggleSql = (id: string) => {
+    setExpandedSql((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
 
   const handleSend = async (textToSend?: string) => {
     const query = textToSend || input;
@@ -77,6 +86,7 @@ export const ChatbotDrawer: React.FC<ChatbotDrawerProps> = ({
         id: (Date.now() + 1).toString(),
         sender: 'bot',
         text: resp.reply,
+        intent: resp.intent,
         sql: resp.sql,
         data: resp.data,
         chart: resp.chart_suggestion,
@@ -87,6 +97,7 @@ export const ChatbotDrawer: React.FC<ChatbotDrawerProps> = ({
       const errorMsg: Message = {
         id: (Date.now() + 1).toString(),
         sender: 'bot',
+        intent: 'conversational',
         text: err?.message?.includes('Token') || err?.message?.includes('Autenticación')
           ? 'Tu sesión ha expirado o requiere autenticación. Por favor inicia sesión nuevamente.'
           : 'Ocurrió un error al procesar tu consulta. Inténtalo nuevamente o prueba con otra pregunta.',
@@ -117,48 +128,75 @@ export const ChatbotDrawer: React.FC<ChatbotDrawerProps> = ({
   };
 
   return (
-    <div className="fixed inset-y-0 right-0 w-full sm:w-[480px] bg-slate-900 border-l border-slate-800 shadow-2xl z-50 flex flex-col">
+    <div className="fixed inset-y-0 right-0 w-full sm:w-[500px] bg-slate-900 border-l border-slate-800 shadow-2xl z-50 flex flex-col">
       {/* Header */}
-      <div className="px-4 py-3.5 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
+      <div className="px-4 py-3.5 border-b border-slate-800 flex items-center justify-between bg-slate-950/70">
         <div className="flex items-center space-x-2.5">
-          <div className="w-7 h-7 rounded-md bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400">
-            <Bot className="w-4 h-4" />
+          <div className="w-8 h-8 rounded-lg bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400">
+            <Bot className="w-4.5 h-4.5" />
           </div>
           <div>
             <h3 className="text-sm font-semibold text-slate-100 flex items-center space-x-1.5">
               <span>SismoWatch AI Assistant</span>
-              <span className="text-[10px] font-mono text-sky-400">Qwen 2.5:2b</span>
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-sky-950/80 text-sky-400 border border-sky-500/30">
+                Qwen 2.5:2b
+              </span>
             </h3>
-            <p className="text-[10px] font-mono text-slate-400">Consultas Text-to-SQL sobre DuckDB</p>
+            <p className="text-[10px] font-mono text-slate-400">Asistente Sismológico e Inteligencia Analítica</p>
           </div>
         </div>
         <button
           onClick={onClose}
           className="p-1 text-slate-400 hover:text-slate-200 rounded hover:bg-slate-800 transition-colors"
+          title="Cerrar asistente"
         >
           <X className="w-5 h-5" />
         </button>
       </div>
 
-      {/* Preguntas sugeridas */}
-      <div className="px-4 py-2 border-b border-slate-800/60 bg-slate-950/30 flex items-center space-x-2 overflow-x-auto text-[11px] font-mono">
+      {/* Preguntas sugeridas multimodales */}
+      <div className="px-3 py-2 border-b border-slate-800/80 bg-slate-950/40 flex items-center space-x-1.5 overflow-x-auto text-[11px] font-mono scrollbar-thin">
         <button
-          onClick={() => handleSend('¿Cuáles son los 5 sismos más fuertes hoy?')}
-          className="whitespace-nowrap px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+          onClick={() => handleSend('¿Cuáles son los 5 sismos más fuertes?')}
+          className="whitespace-nowrap px-2.5 py-1 rounded bg-slate-800/90 hover:bg-slate-700 text-sky-300 border border-slate-700/60 transition-colors flex items-center space-x-1"
         >
-          ⚡ Sismos más fuertes
+          <span>⚡ Sismos fuertes</span>
         </button>
         <button
           onClick={() => handleSend('¿Cómo se distribuyen los sismos por región?')}
-          className="whitespace-nowrap px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+          className="whitespace-nowrap px-2.5 py-1 rounded bg-slate-800/90 hover:bg-slate-700 text-slate-300 border border-slate-700/60 transition-colors flex items-center space-x-1"
         >
-          📍 Top regiones
+          <span>📍 Regiones</span>
         </button>
         <button
           onClick={() => handleSend('¿Hubo alertas de tsunami activas?')}
-          className="whitespace-nowrap px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+          className="whitespace-nowrap px-2.5 py-1 rounded bg-slate-800/90 hover:bg-slate-700 text-cyan-300 border border-slate-700/60 transition-colors flex items-center space-x-1"
         >
-          🌊 Alertas tsunami
+          <span>🌊 Tsunamis</span>
+        </button>
+        <button
+          onClick={() => handleSend('¿Qué hacer durante un sismo?')}
+          className="whitespace-nowrap px-2.5 py-1 rounded bg-slate-800/90 hover:bg-slate-700 text-amber-300 border border-slate-700/60 transition-colors flex items-center space-x-1"
+        >
+          <span>🛡️ Seguridad</span>
+        </button>
+        <button
+          onClick={() => handleSend('¿Qué es la falla de San Andrés?')}
+          className="whitespace-nowrap px-2.5 py-1 rounded bg-slate-800/90 hover:bg-slate-700 text-emerald-300 border border-slate-700/60 transition-colors flex items-center space-x-1"
+        >
+          <span>🏜️ San Andrés</span>
+        </button>
+        <button
+          onClick={() => handleSend('¿Por qué tiembla tanto en el Cinturón de Fuego?')}
+          className="whitespace-nowrap px-2.5 py-1 rounded bg-slate-800/90 hover:bg-slate-700 text-rose-300 border border-slate-700/60 transition-colors flex items-center space-x-1"
+        >
+          <span>🔥 Anillo Fuego</span>
+        </button>
+        <button
+          onClick={() => handleSend('¿Cuántos sismos hay registrados en la plataforma?')}
+          className="whitespace-nowrap px-2.5 py-1 rounded bg-slate-800/90 hover:bg-slate-700 text-indigo-300 border border-slate-700/60 transition-colors flex items-center space-x-1"
+        >
+          <span>📡 Estado</span>
         </button>
       </div>
 
@@ -170,24 +208,38 @@ export const ChatbotDrawer: React.FC<ChatbotDrawerProps> = ({
             className={`flex flex-col ${m.sender === 'user' ? 'items-end' : 'items-start'}`}
           >
             <div
-              className={`max-w-[90%] rounded-lg p-3 text-xs leading-relaxed ${
+              className={`max-w-[92%] rounded-lg p-3 text-xs leading-relaxed ${
                 m.sender === 'user'
                   ? 'bg-sky-600 text-white'
                   : 'bg-slate-800/90 text-slate-200 border border-slate-700/60'
               }`}
             >
-              <p>{m.text}</p>
+              {/* Contenido en texto con saltos de línea preservados */}
+              <div className="whitespace-pre-line">{m.text}</div>
 
-              {/* Consulta SQL generada */}
+              {/* Consulta SQL generada (colapsable con toggle) */}
               {m.sql && (
                 <div className="mt-2.5 pt-2 border-t border-slate-700/60">
-                  <div className="flex items-center space-x-1 text-[10px] font-mono text-sky-400 mb-1">
-                    <Code2 className="w-3 h-3" />
-                    <span>DuckDB SQL Ejecutado:</span>
-                  </div>
-                  <pre className="bg-slate-950 p-2 rounded text-[10px] font-mono text-slate-300 overflow-x-auto">
-                    {m.sql}
-                  </pre>
+                  <button
+                    onClick={() => toggleSql(m.id)}
+                    className="flex items-center space-x-1.5 text-[10px] font-mono text-sky-400 hover:text-sky-300 transition-colors py-0.5 focus:outline-none"
+                  >
+                    <Code2 className="w-3.5 h-3.5" />
+                    <span>{expandedSql[m.id] ? 'Ocultar consulta DuckDB SQL' : 'Ver consulta DuckDB SQL ejecutada'}</span>
+                    {expandedSql[m.id] ? (
+                      <ChevronUp className="w-3 h-3 text-slate-400" />
+                    ) : (
+                      <ChevronDown className="w-3 h-3 text-slate-400" />
+                    )}
+                  </button>
+
+                  {expandedSql[m.id] && (
+                    <div className="mt-2">
+                      <pre className="bg-slate-950 p-2.5 rounded text-[10px] font-mono text-slate-300 overflow-x-auto border border-slate-800/80">
+                        {m.sql}
+                      </pre>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -272,7 +324,7 @@ export const ChatbotDrawer: React.FC<ChatbotDrawerProps> = ({
         {loading && (
           <div className="flex items-center space-x-2 text-slate-400 text-xs font-mono py-2">
             <Sparkles className="w-4 h-4 animate-spin text-sky-400" />
-            <span>Consultando DuckDB con Qwen 2.5:2b...</span>
+            <span>Consultando con Qwen 2.5:2b...</span>
           </div>
         )}
       </div>
