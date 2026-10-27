@@ -1,0 +1,79 @@
+from typing import List, Dict, Any, Optional
+from pydantic import BaseModel, Field
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(..., example="admin")
+    password: str = Field(..., example="AdminSismoWatch2026!")
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    username: str
+    role: str
+    expires_in_minutes: int
+
+
+class KpiResponse(BaseModel):
+    total_events_24h: int
+    max_magnitude: float
+    avg_magnitude: float
+    tsunami_alerts: int
+    quality_score: float
+    last_updated: str
+
+
+class EventItem(BaseModel):
+    id: str
+    mag: float
+    place: str
+    time: str
+    longitude: float
+    latitude: float
+    depth_km: float
+    tsunami: int
+    sig: int
+    status: str
+    mag_type: str
+
+
+class PaginatedEventsResponse(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+    events: List[EventItem]
+
+
+class TimeseriesItem(BaseModel):
+    hour: str
+    count: int
+    avg_mag: float
+    max_mag: float
+
+
+class TopRegionItem(BaseModel):
+    region: str
+    count: int
+    avg_mag: float
+
+
+class ChartSuggestion(BaseModel):
+    type: str = Field(..., description="bar, line, area, pie, or metric")
+    title: str
+    x_key: str
+    y_key: str
+    secondary_y_key: Optional[str] = None
+
+
+class ChatRequest(BaseModel):
+    prompt: str = Field(..., example="¿Cuáles son los 5 sismos más fuertes hoy?")
+
+
+class ChatResponse(BaseModel):
+    reply: str
+    sql: str
+    data: List[Dict[str, Any]]
+    chart_suggestion: Optional[ChartSuggestion] = None
+    row_count: int
